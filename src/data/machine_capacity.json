@@ -1,0 +1,28 @@
+[
+  {
+    "machine_id": "PM1",
+    "machine_name": "Paper Machine 1 (Graphic & Book Specialty)",
+    "assigned_grammages": "80 - 150 gsm",
+    "nominal_deckle_cm": 260,
+    "gross_hours_per_month": 720,
+    "planned_maintenance_hours": 48,
+    "net_operating_hours": 672,
+    "hourly_operating_cost_eur": 480.0,
+    "broke_cost_per_tonne_eur": 280.0,
+    "changeover_broke_tph": 2.4,
+    "virgin_fiber_cost_per_tonne_eur": 780.0
+  },
+  {
+    "machine_id": "PM2",
+    "machine_name": "Paper Machine 2 (Cover & Heavy Packaging)",
+    "assigned_grammages": "240 - 300 gsm",
+    "nominal_deckle_cm": 285,
+    "gross_hours_per_month": 720,
+    "planned_maintenance_hours": 48,
+    "net_operating_hours": 672,
+    "hourly_operating_cost_eur": 520.0,
+    "broke_cost_per_tonne_eur": 280.0,
+    "changeover_broke_tph": 2.8,
+    "virgin_fiber_cost_per_tonne_eur": 780.0
+  }
+]

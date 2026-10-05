@@ -1,0 +1,25 @@
+{
+  "base_setup_hours": 0.5,
+  "washout_hours": {
+    "ultra_light_to_light": 0.0,
+    "light_to_medium": 0.0,
+    "medium_to_dark": 0.0,
+    "same_shade": 0.0,
+    "light_to_ultra_light": 1.5,
+    "medium_to_light": 2.0,
+    "dark_to_light": 3.5,
+    "dark_to_ultra_light": 3.5,
+    "cross_dark_to_dark": 1.2
+  },
+  "grammage_step_hours": {
+    "same": 0.0,
+    "small_step_under_40gsm": 0.5,
+    "large_step_over_40gsm": 1.2
+  },
+  "format_change_hours": {
+    "same": 0.0,
+    "sheet_dimension_change": 0.75,
+    "reel_to_sheet_switch": 1.0
+  },
+  "broke_rate_tph": 2.4
+}
