@@ -21,6 +21,8 @@ import {
   Bar,
   Cell,
 } from 'recharts';
+import { CsvExportButton, type CsvExportOption } from '../common/CsvExportButton';
+import { buildCsvContent, downloadCsvFile } from '../../utils/csvExport';
 
 export const SalesForecastView: React.FC = () => {
   const {
@@ -61,6 +63,122 @@ export const SalesForecastView: React.FC = () => {
     (acc, pt) => acc + pt.forecastTonnes,
     0
   );
+
+  const exportOptions: CsvExportOption[] = [
+    {
+      label: `Demand Forecast by SKU (${forecastHorizon}M Horizon)`,
+      description: 'SKU attributes, machine, demand share, forecasted tonnes & revenue',
+      onExport: () => {
+        const skuData = filteredProducts.map((p) => {
+          const horizonDemandTonnes = Math.round(totalForecastHorizonTonnes * p.demand_share * 10) / 10;
+          const horizonRevenueEur = Math.round(horizonDemandTonnes * p.price_per_tonne_eur);
+          return {
+            sku_id: p.sku_id,
+            brand_line: p.brand_line,
+            shade_name: p.shade_name,
+            shade_group: p.shade_group,
+            grammage_gsm: p.grammage_gsm,
+            format_type: p.format_type,
+            assigned_machine: p.assigned_machine,
+            demand_share_pct: Math.round(p.demand_share * 1000) / 10,
+            price_per_tonne_eur: p.price_per_tonne_eur,
+            forecast_demand_tonnes: horizonDemandTonnes,
+            forecast_revenue_eur: horizonRevenueEur,
+          };
+        });
+
+        const csv = buildCsvContent(
+          {
+            datasetName: `Sales Demand Forecast by SKU (${forecastHorizon}-Month Horizon)`,
+            forecastHorizon: `${forecastHorizon} Months`,
+            assumptions: {
+              DemandDelta: `${demandDeltaPct > 0 ? '+' : ''}${demandDeltaPct}%`,
+              TrendSlopeBeta: `${trendSlopeBeta.toFixed(2)} t/mo`,
+              TrendInterceptAlpha: `${trendInterceptAlpha.toFixed(1)} t`,
+            },
+            filtersApplied: { ShadeFilter: selectedShadeFilter },
+          },
+          [
+            { key: 'sku_id', label: 'SKU ID' },
+            { key: 'brand_line', label: 'Brand Line' },
+            { key: 'shade_name', label: 'Shade Name' },
+            { key: 'shade_group', label: 'Shade Family' },
+            { key: 'grammage_gsm', label: 'Grammage', unit: 'gsm' },
+            { key: 'format_type', label: 'Format' },
+            { key: 'assigned_machine', label: 'Assigned Machine' },
+            { key: 'demand_share_pct', label: 'Demand Share', unit: '%' },
+            { key: 'price_per_tonne_eur', label: 'Contract Price', unit: 'EUR/t' },
+            { key: 'forecast_demand_tonnes', label: 'Forecast Demand', unit: 'tonnes' },
+            { key: 'forecast_revenue_eur', label: 'Projected Revenue', unit: 'EUR' },
+          ],
+          skuData
+        );
+
+        downloadCsvFile('sales_forecast_sku', `horizon_${forecastHorizon}m`, csv);
+      },
+    },
+    {
+      label: 'Monthly Sales Trajectory & Forecast',
+      description: 'Historical monthly series (Jan 2023 - Feb 2026) + forward projections',
+      onExport: () => {
+        const timeSeriesData = combinedSeries.map((pt) => ({
+          month_str: pt.monthStr,
+          year: pt.year,
+          month: pt.month,
+          type: pt.isForecast ? 'Forecast' : 'Historical',
+          historical_tonnes: pt.historicalTonnes ?? '',
+          forecast_tonnes: pt.isForecast ? pt.forecastTonnes : '',
+          trend_baseline_tonnes: pt.trendBaselineTonnes,
+          seasonal_multiplier: pt.seasonalMultiplier,
+          lower_bound_tonnes: pt.lowerBoundTonnes,
+          upper_bound_tonnes: pt.upperBoundTonnes,
+        }));
+
+        const csv = buildCsvContent(
+          {
+            datasetName: 'Monthly Sales History and Forward Projections',
+            forecastHorizon: `${forecastHorizon} Months`,
+            assumptions: {
+              DemandDelta: `${demandDeltaPct > 0 ? '+' : ''}${demandDeltaPct}%`,
+            },
+          },
+          [
+            { key: 'month_str', label: 'Period (YYYY-MM)' },
+            { key: 'type', label: 'Series Type' },
+            { key: 'historical_tonnes', label: 'Actual Sales', unit: 'tonnes' },
+            { key: 'forecast_tonnes', label: 'Forecast Demand', unit: 'tonnes' },
+            { key: 'trend_baseline_tonnes', label: 'Trend Baseline', unit: 'tonnes' },
+            { key: 'seasonal_multiplier', label: 'Seasonal Index' },
+            { key: 'lower_bound_tonnes', label: 'Lower 80% CI', unit: 'tonnes' },
+            { key: 'upper_bound_tonnes', label: 'Upper 80% CI', unit: 'tonnes' },
+          ],
+          timeSeriesData
+        );
+
+        downloadCsvFile('sales_monthly_trajectory', `${forecastHorizon}m`, csv);
+      },
+    },
+    {
+      label: 'Monthly Seasonal Indices',
+      description: 'Calendar month seasonal multipliers derived from historical patterns',
+      onExport: () => {
+        const csv = buildCsvContent(
+          {
+            datasetName: 'Calendar Month Seasonal Indices',
+          },
+          [
+            { key: 'monthNum', label: 'Month Index' },
+            { key: 'monthName', label: 'Month Name' },
+            { key: 'multiplier', label: 'Seasonal Multiplier' },
+            { key: 'percentDelta', label: 'Deviation from Mean', unit: '%' },
+          ],
+          seasonalChartData
+        );
+
+        downloadCsvFile('seasonal_indices', 'calendar', csv);
+      },
+    },
+  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -156,6 +274,8 @@ export const SalesForecastView: React.FC = () => {
               </span>
             </div>
           </div>
+
+          <CsvExportButton label="Export CSV" options={exportOptions} />
         </div>
       </div>
 

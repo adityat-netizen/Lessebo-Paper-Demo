@@ -13,6 +13,9 @@ import {
   ChevronRight,
 } from 'lucide-react';
 
+import { CsvExportButton } from '../common/CsvExportButton';
+import { buildCsvContent, downloadCsvFile } from '../../utils/csvExport';
+
 export const ExecutiveDashboard: React.FC = () => {
   const { optimizationResult, setActiveTab, setSelectedMachine } = usePlanning();
   const { savings } = optimizationResult;
@@ -21,6 +24,90 @@ export const ExecutiveDashboard: React.FC = () => {
   const annualizedHours = Math.round(savings.changeoverHoursSaved * 26);
   const annualizedBrokeTonnes = Math.round(savings.brokeTonnesSaved * 26);
   const annualizedSavingsEur = Math.round(savings.financialSavingsEur * 26);
+
+  const handleExportExecutiveKpis = () => {
+    const kpiData = [
+      {
+        kpi_category: 'Downtime & Capacity',
+        metric_name: 'Changeover Downtime Saved',
+        campaign_value: savings.changeoverHoursSaved,
+        annualized_value: annualizedHours,
+        unit: 'hours',
+        description: 'Hours saved per campaign by constraint-aware sequencing',
+      },
+      {
+        kpi_category: 'Fiber & Quality',
+        metric_name: 'Broke Waste Eliminated',
+        campaign_value: savings.brokeTonnesSaved,
+        annualized_value: annualizedBrokeTonnes,
+        unit: 'tonnes',
+        description: 'Trim, startup, and washout broke fiber scrap minimized',
+      },
+      {
+        kpi_category: 'Financial Performance',
+        metric_name: 'Estimated Financial Value Saved',
+        campaign_value: savings.financialSavingsEur,
+        annualized_value: annualizedSavingsEur,
+        unit: 'EUR',
+        description: 'Operational downtime cost and repulping energy savings',
+      },
+      {
+        kpi_category: 'Operational Efficiency',
+        metric_name: 'Deep Washouts Avoided',
+        campaign_value: savings.washoutsAvoided,
+        annualized_value: savings.washoutsAvoided * 26,
+        unit: 'events',
+        description: 'Severe dark-to-light pigment tank flush cycles eliminated',
+      },
+      {
+        kpi_category: 'Schedule Baseline',
+        metric_name: 'Naive Total Changeover Hours',
+        campaign_value: optimizationResult.naive.metrics.totalChangeoverHours,
+        annualized_value: Math.round(optimizationResult.naive.metrics.totalChangeoverHours * 26),
+        unit: 'hours',
+        description: 'Unoptimized FIFO schedule changeover duration',
+      },
+      {
+        kpi_category: 'Schedule Optimized',
+        metric_name: 'Optimized Total Changeover Hours',
+        campaign_value: optimizationResult.optimized.metrics.totalChangeoverHours,
+        annualized_value: Math.round(optimizationResult.optimized.metrics.totalChangeoverHours * 26),
+        unit: 'hours',
+        description: 'Sequence-optimized light-to-dark schedule changeover duration',
+      },
+      {
+        kpi_category: 'Customer Delivery',
+        metric_name: 'Customer SLA On-Time Delivery Compliance',
+        campaign_value: optimizationResult.optimized.metrics.slaCompliancePct,
+        annualized_value: optimizationResult.optimized.metrics.slaCompliancePct,
+        unit: '%',
+        description: 'Percentage of customer campaign orders delivered within due window',
+      },
+    ];
+
+    const csv = buildCsvContent(
+      {
+        datasetName: 'Executive KPI Summary & Annualized Savings',
+        scenarioName: 'Active Plan',
+        assumptions: {
+          CampaignsPerYear: 26,
+          WashoutBrokeRate: '2.4 t/h (Client input required)',
+          MachineHourlyCost: '€480/h (Client input required)',
+        },
+      },
+      [
+        { key: 'kpi_category', label: 'KPI Category' },
+        { key: 'metric_name', label: 'Metric Name' },
+        { key: 'campaign_value', label: 'Campaign Value' },
+        { key: 'annualized_value', label: 'Annualized Extrapolation (26 Cycles)' },
+        { key: 'unit', label: 'Unit' },
+        { key: 'description', label: 'Description' },
+      ],
+      kpiData
+    );
+
+    downloadCsvFile('executive_kpis', 'active_plan', csv);
+  };
 
   const pipelineSteps = [
     {
@@ -108,25 +195,33 @@ export const ExecutiveDashboard: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => setActiveTab('sequencing')}
-          style={{
-            background: 'var(--cyan-accent)',
-            color: 'var(--navy-dark)',
-            padding: '14px 24px',
-            borderRadius: 'var(--radius-md)',
-            fontWeight: 700,
-            fontSize: '0.9rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            boxShadow: '0 4px 14px rgba(13, 187, 223, 0.35)',
-          }}
-        >
-          <Sparkles size={18} />
-          Explore Hero Screen (Sequencing)
-          <ArrowRight size={16} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <CsvExportButton
+            label="Export KPI Summary CSV"
+            onExport={handleExportExecutiveKpis}
+            style={{ zIndex: 2 }}
+          />
+
+          <button
+            onClick={() => setActiveTab('sequencing')}
+            style={{
+              background: 'var(--cyan-accent)',
+              color: 'var(--navy-dark)',
+              padding: '14px 24px',
+              borderRadius: 'var(--radius-md)',
+              fontWeight: 700,
+              fontSize: '0.9rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(13, 187, 223, 0.35)',
+            }}
+          >
+            <Sparkles size={18} />
+            Explore Hero Screen (Sequencing)
+            <ArrowRight size={16} />
+          </button>
+        </div>
       </div>
 
       {/* KPI Cards Grid */}

@@ -11,6 +11,8 @@ import {
   Eye,
   Grid,
 } from 'lucide-react';
+import { CsvExportButton, type CsvExportOption } from '../common/CsvExportButton';
+import { buildCsvContent, downloadCsvFile } from '../../utils/csvExport';
 import type { ScheduledRun } from '../../types';
 
 export const SequenceOptimizationView: React.FC = () => {
@@ -40,6 +42,216 @@ export const SequenceOptimizationView: React.FC = () => {
     'Sky Blue',
     'Forest Green',
     'Deep Charcoal',
+  ];
+
+  const exportSequenceOptions: CsvExportOption[] = [
+    {
+      label: `Optimized Production Sequence (${selectedMachine})`,
+      description: 'Ordered runs with light-to-dark color sequence, transition hours, broke & SLA',
+      onExport: () => {
+        const runData = optimized.runs.map((r) => ({
+          run_sequence: r.runSequence,
+          order_id: r.order_id,
+          customer_name: r.customer_name,
+          customer_priority: r.customer_priority,
+          sku_id: r.sku_id,
+          brand_line: r.brand_line,
+          shade_name: r.shade_name,
+          shade_group: r.shade_group,
+          grammage_gsm: r.grammage_gsm,
+          format_type: r.format_type,
+          sheet_dimensions: r.sheet_dimensions ?? 'N/A',
+          quantity_tonnes: r.quantity_tonnes,
+          production_hours: r.production_hours,
+          start_hour: r.startHour,
+          end_hour: r.endHour,
+          changeover_hours: r.changeoverHours,
+          base_setup_hours: r.changeoverBreakdown.baseSetup,
+          washout_hours: r.changeoverBreakdown.washoutHours,
+          grammage_hours: r.changeoverBreakdown.grammageHours,
+          format_hours: r.changeoverBreakdown.formatHours,
+          is_washout: r.isWashout ? 'YES' : 'NO',
+          broke_tonnes: r.brokeTonnes,
+          due_in_days: r.due_in_days,
+          meets_sla: r.meetsSla ? 'YES' : 'NO (At Risk)',
+          changeover_reason: r.changeoverBreakdown.reason,
+        }));
+
+        const csv = buildCsvContent(
+          {
+            datasetName: `Optimized Production Run Sequence (${selectedMachine})`,
+            scenarioName: 'Optimized Light-to-Dark Heuristic',
+            assumptions: {
+              Machine: selectedMachine,
+              BrokeRate: '2.4 t/h (Client input required)',
+              HourlyOperatingCost: '€480/h (Client input required)',
+            },
+          },
+          [
+            { key: 'run_sequence', label: 'Sequence Position' },
+            { key: 'order_id', label: 'Order ID' },
+            { key: 'customer_name', label: 'Customer' },
+            { key: 'customer_priority', label: 'Priority SLA' },
+            { key: 'sku_id', label: 'SKU' },
+            { key: 'brand_line', label: 'Brand Line' },
+            { key: 'shade_name', label: 'Shade Name' },
+            { key: 'shade_group', label: 'Shade Tier' },
+            { key: 'grammage_gsm', label: 'Grammage', unit: 'gsm' },
+            { key: 'format_type', label: 'Format' },
+            { key: 'quantity_tonnes', label: 'Run Quantity', unit: 'tonnes' },
+            { key: 'production_hours', label: 'Run Duration', unit: 'hours' },
+            { key: 'start_hour', label: 'Start Hour', unit: 'hours' },
+            { key: 'end_hour', label: 'End Hour', unit: 'hours' },
+            { key: 'changeover_hours', label: 'Total Changeover', unit: 'hours' },
+            { key: 'base_setup_hours', label: 'Base Setup', unit: 'hours' },
+            { key: 'washout_hours', label: 'Color Washout', unit: 'hours' },
+            { key: 'grammage_hours', label: 'Grammage Step', unit: 'hours' },
+            { key: 'format_hours', label: 'Format Switch', unit: 'hours' },
+            { key: 'is_washout', label: 'Deep Washout Required' },
+            { key: 'broke_tonnes', label: 'Transition Broke Scrap', unit: 'tonnes' },
+            { key: 'due_in_days', label: 'Customer Due Deadline', unit: 'days' },
+            { key: 'meets_sla', label: 'SLA Delivery Compliance' },
+            { key: 'changeover_reason', label: 'Engineering Changeover Reason' },
+          ],
+          runData
+        );
+
+        downloadCsvFile(`optimized_sequence_${selectedMachine.toLowerCase()}`, 'optimized', csv);
+      },
+    },
+    {
+      label: `Naive Production Sequence (${selectedMachine})`,
+      description: 'Unoptimized order-arrival sequence exhibiting high washouts and broke',
+      onExport: () => {
+        const runData = naive.runs.map((r) => ({
+          run_sequence: r.runSequence,
+          order_id: r.order_id,
+          customer_name: r.customer_name,
+          customer_priority: r.customer_priority,
+          sku_id: r.sku_id,
+          brand_line: r.brand_line,
+          shade_name: r.shade_name,
+          shade_group: r.shade_group,
+          grammage_gsm: r.grammage_gsm,
+          format_type: r.format_type,
+          quantity_tonnes: r.quantity_tonnes,
+          production_hours: r.production_hours,
+          start_hour: r.startHour,
+          end_hour: r.endHour,
+          changeover_hours: r.changeoverHours,
+          is_washout: r.isWashout ? 'YES' : 'NO',
+          broke_tonnes: r.brokeTonnes,
+          due_in_days: r.due_in_days,
+          meets_sla: r.meetsSla ? 'YES' : 'NO (At Risk)',
+          changeover_reason: r.changeoverBreakdown.reason,
+        }));
+
+        const csv = buildCsvContent(
+          {
+            datasetName: `Naive FIFO Production Run Sequence (${selectedMachine})`,
+            scenarioName: 'Naive FIFO Baseline',
+            assumptions: {
+              Machine: selectedMachine,
+              BrokeRate: '2.4 t/h (Client input required)',
+            },
+          },
+          [
+            { key: 'run_sequence', label: 'Sequence Position' },
+            { key: 'order_id', label: 'Order ID' },
+            { key: 'customer_name', label: 'Customer' },
+            { key: 'sku_id', label: 'SKU' },
+            { key: 'shade_name', label: 'Shade Name' },
+            { key: 'grammage_gsm', label: 'Grammage', unit: 'gsm' },
+            { key: 'quantity_tonnes', label: 'Run Quantity', unit: 'tonnes' },
+            { key: 'start_hour', label: 'Start Hour', unit: 'hours' },
+            { key: 'end_hour', label: 'End Hour', unit: 'hours' },
+            { key: 'changeover_hours', label: 'Total Changeover', unit: 'hours' },
+            { key: 'is_washout', label: 'Deep Washout Required' },
+            { key: 'broke_tonnes', label: 'Transition Broke Scrap', unit: 'tonnes' },
+            { key: 'due_in_days', label: 'Customer Due Deadline', unit: 'days' },
+            { key: 'meets_sla', label: 'SLA Delivery Compliance' },
+            { key: 'changeover_reason', label: 'Engineering Changeover Reason' },
+          ],
+          runData
+        );
+
+        downloadCsvFile(`naive_sequence_${selectedMachine.toLowerCase()}`, 'naive', csv);
+      },
+    },
+    {
+      label: 'Sequence Comparison Summary',
+      description: 'Side-by-side KPI comparison of changeover hours, broke fiber, and capacity gains',
+      onExport: () => {
+        const summaryData = [
+          {
+            metric: 'Total Sequence Changeover Hours',
+            naive_value: naive.metrics.totalChangeoverHours,
+            optimized_value: optimized.metrics.totalChangeoverHours,
+            delta_savings: savings.changeoverHoursSaved,
+            unit: 'hours',
+            improvement_pct: Math.round((savings.changeoverHoursSaved / (naive.metrics.totalChangeoverHours || 1)) * 1000) / 10,
+          },
+          {
+            metric: 'Total Transition Broke Scrap',
+            naive_value: naive.metrics.totalBrokeTonnes,
+            optimized_value: optimized.metrics.totalBrokeTonnes,
+            delta_savings: savings.brokeTonnesSaved,
+            unit: 'tonnes',
+            improvement_pct: Math.round((savings.brokeTonnesSaved / (naive.metrics.totalBrokeTonnes || 1)) * 1000) / 10,
+          },
+          {
+            metric: 'Deep Washout Chest Cleanings',
+            naive_value: naive.metrics.washoutCount,
+            optimized_value: optimized.metrics.washoutCount,
+            delta_savings: savings.washoutsAvoided,
+            unit: 'events',
+            improvement_pct: Math.round((savings.washoutsAvoided / (naive.metrics.washoutCount || 1)) * 1000) / 10,
+          },
+          {
+            metric: 'Net Schedule Campaign Span',
+            naive_value: naive.metrics.totalSpanHours,
+            optimized_value: optimized.metrics.totalSpanHours,
+            delta_savings: savings.capacityReleasedHours,
+            unit: 'hours',
+            improvement_pct: Math.round((savings.capacityReleasedHours / (naive.metrics.totalSpanHours || 1)) * 1000) / 10,
+          },
+          {
+            metric: 'Estimated Operational Financial Cost',
+            naive_value: naive.metrics.totalOperatingCostEur + naive.metrics.totalBrokeCostEur,
+            optimized_value: optimized.metrics.totalOperatingCostEur + optimized.metrics.totalBrokeCostEur,
+            delta_savings: savings.financialSavingsEur,
+            unit: 'EUR',
+            improvement_pct: Math.round((savings.financialSavingsEur / ((naive.metrics.totalOperatingCostEur + naive.metrics.totalBrokeCostEur) || 1)) * 1000) / 10,
+          },
+          {
+            metric: 'Customer SLA On-Time Delivery Compliance',
+            naive_value: naive.metrics.slaCompliancePct,
+            optimized_value: optimized.metrics.slaCompliancePct,
+            delta_savings: Math.round((optimized.metrics.slaCompliancePct - naive.metrics.slaCompliancePct) * 10) / 10,
+            unit: '%',
+            improvement_pct: Math.round((optimized.metrics.slaCompliancePct - naive.metrics.slaCompliancePct) * 10) / 10,
+          },
+        ];
+
+        const csv = buildCsvContent(
+          {
+            datasetName: `Production Sequence Comparison Summary (${selectedMachine})`,
+            scenarioName: 'Naive vs Optimized',
+          },
+          [
+            { key: 'metric', label: 'Operational KPI' },
+            { key: 'naive_value', label: 'Naive FIFO Baseline' },
+            { key: 'optimized_value', label: 'Sequence Optimized' },
+            { key: 'delta_savings', label: 'Net Savings / Delta' },
+            { key: 'unit', label: 'Unit' },
+            { key: 'improvement_pct', label: 'Improvement Percentage', unit: '%' },
+          ],
+          summaryData
+        );
+
+        downloadCsvFile(`sequence_comparison_${selectedMachine.toLowerCase()}`, 'summary', csv);
+      },
+    },
   ];
 
   return (
@@ -88,6 +300,7 @@ export const SequenceOptimizationView: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <CsvExportButton label="Export CSV" options={exportSequenceOptions} />
           <button
             onClick={() => setShowTransitionMatrix(!showTransitionMatrix)}
             style={{

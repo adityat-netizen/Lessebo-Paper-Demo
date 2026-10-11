@@ -1,0 +1,68 @@
+[
+  {
+    "signatureId": "SIG_SENSOR_DRIFT",
+    "name": "Slow Glass Electrode Fouling / pH Drift",
+    "initiatorTag": "AIT_102",
+    "primaryType": "slow_sensor_drift",
+    "description": "Gradual continuous negative slope on neutralization pH with downstream compensatory hunting in chemical dosing pump rate (FIT_401).",
+    "leadTag": "AIT_102",
+    "lagTags": ["FIT_401"],
+    "expectedCorrelations": [
+      { "tagA": "AIT_102", "tagB": "FIT_401", "sign": -1, "minMagnitude": 0.65 }
+    ],
+    "recommendedSopAction": "Inspect pH sensor glass bulb for carbonate scaling or biological biofilm. Perform two-point buffer calibration (pH 7.0 & 4.01). Switch to redundant instrument train B."
+  },
+  {
+    "signatureId": "SIG_HYDRAULIC_SURGE",
+    "name": "Upstream Hydraulic Shock Load & Clarifier Washout",
+    "initiatorTag": "FIT_101",
+    "primaryType": "hydraulic_shock_surge",
+    "description": "Sudden step increase in raw influent flow (FIT_101) exceeding equalization buffer capacity, driving clarifier level surge (LIT_101) and subsequent discharge turbidity (AIT_103) & TSS breakthrough.",
+    "leadTag": "FIT_101",
+    "lagTags": ["LIT_101", "AIT_103", "AIT_105"],
+    "expectedCorrelations": [
+      { "tagA": "FIT_101", "tagB": "LIT_101", "sign": 1, "minMagnitude": 0.70 },
+      { "tagA": "FIT_101", "tagB": "AIT_103", "sign": 1, "minMagnitude": 0.60 }
+    ],
+    "recommendedSopAction": "Divert surplus raw whitewater flow to emergency storm equalization basin. Throttle main clarifier influent gate. Increase flocculant polymer dosing rate to accelerate solids settling."
+  },
+  {
+    "signatureId": "SIG_PUMP_CAVITATION",
+    "name": "Recirculation Pump Impeller Cavitation & Head Loss",
+    "initiatorTag": "IIT_301",
+    "primaryType": "pump_impeller_cavitation",
+    "description": "Elevated erratic motor current variance (IIT_301) paired with unexpected flow drops in recirculation line (FIT_101), indicating air entrainment or suction strainer clogging.",
+    "leadTag": "IIT_301",
+    "lagTags": ["FIT_101", "LIT_101"],
+    "expectedCorrelations": [
+      { "tagA": "IIT_301", "tagB": "FIT_101", "sign": -1, "minMagnitude": 0.55 }
+    ],
+    "recommendedSopAction": "Inspect pump suction suction strainer for fibrous broke accumulation. Check seal flush water pressure and de-aerate pump casing. Start backup recirculation pump P-102B."
+  },
+  {
+    "signatureId": "SIG_DOSING_VAPOR_LOCK",
+    "name": "Coagulant / Acid Dosing Line Vapor Lock Fault",
+    "initiatorTag": "FIT_401",
+    "primaryType": "dosing_line_vapor_lock",
+    "description": "Immediate collapse of chemical dosing flow (FIT_401) to near zero despite normal controller output command, causing unbuffered pH shift and organic COD breakthrough.",
+    "leadTag": "FIT_401",
+    "lagTags": ["AIT_102", "AIT_104"],
+    "expectedCorrelations": [
+      { "tagA": "FIT_401", "tagB": "AIT_104", "sign": -1, "minMagnitude": 0.70 }
+    ],
+    "recommendedSopAction": "Prime metering pump head and open manual vapor bleed valve on chemical manifold. Verify dosing line check valves and chemical day-tank level."
+  },
+  {
+    "signatureId": "SIG_AERATION_DEFICIT",
+    "name": "Aeration Basin Oxygen Transfer Sag / Blower Fault",
+    "initiatorTag": "AIT_202",
+    "primaryType": "aeration_oxygen_deficit",
+    "description": "Dissolved oxygen (AIT_202) dropping below minimum biological respiration threshold (< 1.2 mg/L), leading to incomplete biological oxidation and COD elevation in effluent.",
+    "leadTag": "AIT_202",
+    "lagTags": ["AIT_104"],
+    "expectedCorrelations": [
+      { "tagA": "AIT_202", "tagB": "AIT_104", "sign": -1, "minMagnitude": 0.65 }
+    ],
+    "recommendedSopAction": "Engage secondary aeration blower unit. Inspect membrane diffuser headers for backpressure buildup. Temporarily reduce organic loading rate to biological aeration basins."
+  }
+]

@@ -1,11 +1,26 @@
 import React from 'react';
 import { usePlanning, type TabId } from '../../context/PlanningContext';
-import { LayoutDashboard, TrendingUp, CalendarDays, Sparkles, SlidersHorizontal } from 'lucide-react';
+import {
+  LayoutDashboard,
+  TrendingUp,
+  CalendarDays,
+  Sparkles,
+  SlidersHorizontal,
+  Activity,
+  AlertTriangle,
+  FileSearch,
+} from 'lucide-react';
 
 export const Navigation: React.FC = () => {
   const { activeTab, setActiveTab } = usePlanning();
 
-  const tabs: { id: TabId; label: string; icon: React.ReactNode; isHero?: boolean }[] = [
+  const tabs: {
+    id: TabId;
+    label: string;
+    icon: React.ReactNode;
+    isHero?: boolean;
+    isWaterTrack?: boolean;
+  }[] = [
     {
       id: 'executive',
       label: '1. Executive Overview',
@@ -31,6 +46,24 @@ export const Navigation: React.FC = () => {
       id: 'scenarios',
       label: '5. Scenario / What-If Sandbox',
       icon: <SlidersHorizontal size={16} />,
+    },
+    {
+      id: 'water-telemetry',
+      label: '6. SCADA Telemetry',
+      icon: <Activity size={16} />,
+      isWaterTrack: true,
+    },
+    {
+      id: 'water-anomalies',
+      label: '7. Anomaly Detection',
+      icon: <AlertTriangle size={16} />,
+      isWaterTrack: true,
+    },
+    {
+      id: 'water-incidents',
+      label: '8. Incident Root Cause',
+      icon: <FileSearch size={16} />,
+      isWaterTrack: true,
     },
   ];
 
@@ -106,6 +139,24 @@ export const Navigation: React.FC = () => {
                   }}
                 >
                   Hero Screen
+                </span>
+              )}
+              {tab.isWaterTrack && tab.id === 'water-telemetry' && (
+                <span
+                  style={{
+                    fontSize: '0.62rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    padding: '2px 5px',
+                    borderRadius: '4px',
+                    background: 'rgba(13, 187, 223, 0.15)',
+                    color: '#007A94',
+                    border: '1px solid rgba(13, 187, 223, 0.3)',
+                    marginLeft: '2px',
+                  }}
+                >
+                  Water Track
                 </span>
               )}
             </button>

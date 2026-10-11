@@ -10,6 +10,8 @@ import {
   Sliders,
   Filter,
 } from 'lucide-react';
+import { CsvExportButton, type CsvExportOption } from '../common/CsvExportButton';
+import { buildCsvContent, downloadCsvFile } from '../../utils/csvExport';
 
 export const ProductionPlanningView: React.FC = () => {
   const {
@@ -35,6 +37,117 @@ export const ProductionPlanningView: React.FC = () => {
   const filteredRequirements = netRequirements.filter((req) => {
     return filterMachine === 'ALL' || req.assigned_machine === filterMachine;
   });
+
+  const exportPlanningOptions: CsvExportOption[] = [
+    {
+      label: `Net Requirements by SKU (${filterMachine})`,
+      description: 'Gross demand, on-hand & allocated stock, target safety buffer, net tonnes & run hours',
+      onExport: () => {
+        const reqData = filteredRequirements.map((req) => ({
+          sku_id: req.sku_id,
+          brand_line: req.brand_line,
+          shade_name: req.shade_name,
+          shade_group: req.shade_group,
+          grammage_gsm: req.grammage_gsm,
+          format_type: req.format_type,
+          assigned_machine: req.assigned_machine,
+          forecast_demand_tonnes: req.forecastDemandTonnes,
+          on_hand_stock_tonnes: req.onHandStockTonnes,
+          allocated_stock_tonnes: req.allocatedStockTonnes,
+          available_stock_tonnes: req.availableStockTonnes,
+          safety_stock_target_tonnes: req.safetyStockTargetTonnes,
+          net_production_requirement_tonnes: req.netProductionRequirementTonnes,
+          required_machine_hours: req.requiredMachineHours,
+          status: req.status,
+        }));
+
+        const csv = buildCsvContent(
+          {
+            datasetName: `Net Production Requirements (${forecastHorizon}M Horizon)`,
+            forecastHorizon: `${forecastHorizon} Months`,
+            assumptions: {
+              SafetyBufferDays: `${safetyBufferDays} days`,
+              PM1UnplannedDowntime: `${pm1DowntimeHours} hours`,
+            },
+            filtersApplied: { MachineFilter: filterMachine },
+          },
+          [
+            { key: 'sku_id', label: 'SKU ID' },
+            { key: 'brand_line', label: 'Brand Line' },
+            { key: 'shade_name', label: 'Shade Name' },
+            { key: 'shade_group', label: 'Shade Family' },
+            { key: 'grammage_gsm', label: 'Grammage', unit: 'gsm' },
+            { key: 'format_type', label: 'Format' },
+            { key: 'assigned_machine', label: 'Machine' },
+            { key: 'forecast_demand_tonnes', label: 'Gross Demand', unit: 'tonnes' },
+            { key: 'on_hand_stock_tonnes', label: 'On-Hand Stock', unit: 'tonnes' },
+            { key: 'allocated_stock_tonnes', label: 'Allocated Stock', unit: 'tonnes' },
+            { key: 'available_stock_tonnes', label: 'Available Stock', unit: 'tonnes' },
+            { key: 'safety_stock_target_tonnes', label: 'Safety Target', unit: 'tonnes' },
+            { key: 'net_production_requirement_tonnes', label: 'Net Production Required', unit: 'tonnes' },
+            { key: 'required_machine_hours', label: 'Required Run Time', unit: 'hours' },
+            { key: 'status', label: 'Planning Status' },
+          ],
+          reqData
+        );
+
+        downloadCsvFile('production_net_requirements', `machine_${filterMachine.toLowerCase()}`, csv);
+      },
+    },
+    {
+      label: 'Machine Capacity & Loading Breakdown',
+      description: 'Gross hours, planned maintenance, net available capacity, utilization % & bottlenecks',
+      onExport: () => {
+        const loadingData = (['PM1', 'PM2'] as const).map((mId) => {
+          const load = machineLoading[mId];
+          return {
+            machine_id: load.machineId,
+            machine_name: load.machineName,
+            nominal_deckle_cm: load.nominalDeckleCm,
+            gross_hours: load.grossHours,
+            planned_maintenance_hours: load.plannedMaintenanceHours,
+            scenario_downtime_hours: load.scenarioDowntimeHours,
+            net_available_hours: load.netAvailableHours,
+            required_run_hours: load.totalRunHoursRequired,
+            required_tonnes: load.totalTonnageRequired,
+            utilization_pct: load.utilizationPct,
+            headroom_hours: load.headroomHours,
+            is_bottleneck: load.isBottleneck ? 'YES (Over capacity)' : 'NO (Feasible)',
+            sku_count: load.skusCount,
+          };
+        });
+
+        const csv = buildCsvContent(
+          {
+            datasetName: 'Machine Capacity Loading Breakdown',
+            forecastHorizon: `${forecastHorizon} Months`,
+            assumptions: {
+              SafetyBufferDays: `${safetyBufferDays} days`,
+              PM1UnplannedDowntime: `${pm1DowntimeHours} hours`,
+            },
+          },
+          [
+            { key: 'machine_id', label: 'Machine ID' },
+            { key: 'machine_name', label: 'Machine Name' },
+            { key: 'nominal_deckle_cm', label: 'Nominal Deckle', unit: 'cm' },
+            { key: 'gross_hours', label: 'Gross Operating Window', unit: 'hours' },
+            { key: 'planned_maintenance_hours', label: 'Planned Maintenance', unit: 'hours' },
+            { key: 'scenario_downtime_hours', label: 'Unplanned Stop Downtime', unit: 'hours' },
+            { key: 'net_available_hours', label: 'Net Available Hours', unit: 'hours' },
+            { key: 'required_run_hours', label: 'Required Production Run Time', unit: 'hours' },
+            { key: 'required_tonnes', label: 'Required Production Tonnage', unit: 'tonnes' },
+            { key: 'utilization_pct', label: 'Capacity Utilization', unit: '%' },
+            { key: 'headroom_hours', label: 'Capacity Headroom (+) / Deficit (-)', unit: 'hours' },
+            { key: 'is_bottleneck', label: 'Bottleneck Status' },
+            { key: 'sku_count', label: 'Assigned SKUs Count' },
+          ],
+          loadingData
+        );
+
+        downloadCsvFile('machine_capacity_loading', `${forecastHorizon}m`, csv);
+      },
+    },
+  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -122,6 +235,8 @@ export const ProductionPlanningView: React.FC = () => {
               {pm1DowntimeHours}h
             </span>
           </div>
+
+          <CsvExportButton label="Export CSV" options={exportPlanningOptions} />
         </div>
       </div>
 

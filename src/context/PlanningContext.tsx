@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useMemo } from 'react';
+import React, { createContext, useContext, useState, useMemo, useEffect } from 'react';
 import type {
   Product,
   InventoryItem,
@@ -9,6 +9,16 @@ import type {
   OptimizationComparison,
   SalesHistoryData,
 } from '../types';
+import type {
+  ScenarioDefinition,
+  ScenarioParameters,
+  ScenarioEvaluation,
+} from '../types/scenarioWorkbench';
+import {
+  BASELINE_PARAMETERS,
+  INITIAL_SCENARIOS,
+} from '../types/scenarioWorkbench';
+import { evaluateScenario } from '../engine/scenarioEvaluator';
 
 import productsRaw from '../data/products.json';
 import salesRaw from '../data/sales_orders_monthly.json';
@@ -20,7 +30,15 @@ import { computeForecast, type ForecastCalculationResult } from '../engine/forec
 import { computeNetRequirements, type PlanningCalculationResult } from '../engine/planningEngine';
 import { optimizeSequence } from '../engine/sequenceOptimizer';
 
-export type TabId = 'executive' | 'forecast' | 'planning' | 'sequencing' | 'scenarios';
+export type TabId =
+  | 'executive'
+  | 'forecast'
+  | 'planning'
+  | 'sequencing'
+  | 'scenarios'
+  | 'water-telemetry'
+  | 'water-anomalies'
+  | 'water-incidents';
 
 interface PlanningContextValue {
   // Data sets
@@ -44,7 +62,23 @@ interface PlanningContextValue {
   forecastHorizon: 3 | 6 | 12;
   setForecastHorizon: (h: 3 | 6 | 12) => void;
 
-  // Scenario settings & sliders
+  // Scenarios Workbench Management
+  scenarios: ScenarioDefinition[];
+  activeScenarioId: string;
+  setActiveScenarioId: (id: string) => void;
+  activeScenario: ScenarioDefinition;
+  activeScenarioParams: ScenarioParameters;
+  createScenario: (name: string, description?: string, baseParams?: ScenarioParameters) => string;
+  duplicateScenario: (scenarioId: string) => string;
+  updateScenario: (scenarioId: string, updates: Partial<ScenarioDefinition>) => void;
+  updateScenarioParameters: (scenarioId: string, updates: Partial<ScenarioParameters>) => void;
+  deleteScenario: (scenarioId: string) => void;
+  resetScenarioToBaseline: (scenarioId: string) => void;
+  activeScenarioEvaluation: ScenarioEvaluation;
+  allScenarioEvaluations: Record<string, ScenarioEvaluation>;
+  baselineEvaluation: ScenarioEvaluation;
+
+  // Legacy bindings for seamless screen backwards compatibility
   activePreset: PresetScenarioId;
   applyPreset: (preset: PresetScenarioId) => void;
   demandDeltaPct: number;
@@ -80,53 +114,215 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Forecast state
   const [forecastHorizon, setForecastHorizon] = useState<3 | 6 | 12>(3);
 
-  // Scenario state
-  const [activePreset, setActivePreset] = useState<PresetScenarioId>('baseline');
-  const [demandDeltaPct, setDemandDeltaPct] = useState<number>(0);
-  const [pm1DowntimeHours, setPm1DowntimeHours] = useState<number>(0);
-  const [safetyBufferDays, setSafetyBufferDays] = useState<number>(10);
-  const [washoutMultiplier, setWashoutMultiplier] = useState<number>(1.0);
+  // Scenarios Workbench State
+  const [scenarios, setScenarios] = useState<ScenarioDefinition[]>(() => {
+    try {
+      const stored = localStorage.getItem('lessebo_scenarios_v1');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length >= 1) {
+          const hasBaseline = parsed.some((s) => s.id === 'baseline');
+          if (hasBaseline) return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_SCENARIOS;
+  });
+
+  const [activeScenarioId, setActiveScenarioId] = useState<string>('baseline');
+
+  // Persist scenarios to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('lessebo_scenarios_v1', JSON.stringify(scenarios));
+    } catch {
+      // ignore
+    }
+  }, [scenarios]);
+
+  // Current active scenario object
+  const activeScenario = useMemo(() => {
+    return scenarios.find((s) => s.id === activeScenarioId) || scenarios[0];
+  }, [scenarios, activeScenarioId]);
+
+  const activeScenarioParams = activeScenario.parameters;
+
+  // CRUD Operations
+  const createScenario = (
+    name: string,
+    description: string = 'User customized planning scenario',
+    baseParams: ScenarioParameters = BASELINE_PARAMETERS
+  ): string => {
+    const newId = `scenario_${Date.now()}`;
+    const newScenario: ScenarioDefinition = {
+      id: newId,
+      name: name.trim() || `Custom Scenario ${scenarios.length}`,
+      description,
+      isLockedBaseline: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      parameters: { ...baseParams },
+    };
+    setScenarios((prev) => [...prev, newScenario]);
+    setActiveScenarioId(newId);
+    return newId;
+  };
+
+  const duplicateScenario = (targetId: string): string => {
+    const target = scenarios.find((s) => s.id === targetId) || activeScenario;
+    const newId = `scenario_${Date.now()}`;
+    const newScenario: ScenarioDefinition = {
+      id: newId,
+      name: `${target.name} (Copy)`,
+      description: `Duplicated from ${target.name}. Fully adjustable parameters.`,
+      isLockedBaseline: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      parameters: { ...target.parameters },
+    };
+    setScenarios((prev) => [...prev, newScenario]);
+    setActiveScenarioId(newId);
+    return newId;
+  };
+
+  const updateScenario = (targetId: string, updates: Partial<ScenarioDefinition>) => {
+    setScenarios((prev) =>
+      prev.map((s) => {
+        if (s.id !== targetId) return s;
+        if (s.isLockedBaseline && updates.name) return s; // Baseline name locked
+        return {
+          ...s,
+          ...updates,
+          updatedAt: new Date().toISOString(),
+        };
+      })
+    );
+  };
+
+  const updateScenarioParameters = (
+    targetId: string,
+    updates: Partial<ScenarioParameters>
+  ) => {
+    setScenarios((prev) =>
+      prev.map((s) => {
+        if (s.id !== targetId) return s;
+        if (s.isLockedBaseline) return s; // Locked baseline read-only
+        return {
+          ...s,
+          updatedAt: new Date().toISOString(),
+          parameters: {
+            ...s.parameters,
+            ...updates,
+          },
+        };
+      })
+    );
+  };
+
+  const deleteScenario = (targetId: string) => {
+    const target = scenarios.find((s) => s.id === targetId);
+    if (!target || target.isLockedBaseline) return; // Cannot delete locked baseline
+
+    setScenarios((prev) => prev.filter((s) => s.id !== targetId));
+    if (activeScenarioId === targetId) {
+      setActiveScenarioId('baseline');
+    }
+  };
+
+  const resetScenarioToBaseline = (targetId: string) => {
+    updateScenarioParameters(targetId, { ...BASELINE_PARAMETERS });
+  };
+
+  // Memoized Evaluations across all scenarios for side-by-side comparison
+  const allScenarioEvaluations = useMemo(() => {
+    const evals: Record<string, ScenarioEvaluation> = {};
+    scenarios.forEach((s) => {
+      evals[s.id] = evaluateScenario(
+        s.parameters,
+        products,
+        inventory,
+        machineCapacity,
+        upcomingOrders,
+        forecastHorizon
+      );
+    });
+    return evals;
+  }, [scenarios, products, inventory, machineCapacity, upcomingOrders, forecastHorizon]);
+
+  const activeScenarioEvaluation =
+    allScenarioEvaluations[activeScenarioId] || allScenarioEvaluations['baseline'];
+  const baselineEvaluation = allScenarioEvaluations['baseline'];
+
+  // Legacy Preset compatibility
+  const activePreset: PresetScenarioId =
+    activeScenarioId === 'baseline'
+      ? 'baseline'
+      : activeScenarioId === 'peak_demand'
+      ? 'peak_demand'
+      : activeScenarioId === 'pm1_maintenance'
+      ? 'pm1_breakdown'
+      : activeScenarioId === 'vip_luxury_rush'
+      ? 'vip_rush'
+      : 'baseline';
 
   const applyPreset = (preset: PresetScenarioId) => {
-    setActivePreset(preset);
-    if (preset === 'baseline') {
-      setDemandDeltaPct(0);
-      setPm1DowntimeHours(0);
-      setSafetyBufferDays(10);
-      setWashoutMultiplier(1.0);
-    } else if (preset === 'peak_demand') {
-      setDemandDeltaPct(20);
-      setPm1DowntimeHours(0);
-      setSafetyBufferDays(14);
-      setWashoutMultiplier(1.0);
-    } else if (preset === 'pm1_breakdown') {
-      setDemandDeltaPct(0);
-      setPm1DowntimeHours(36);
-      setSafetyBufferDays(10);
-      setWashoutMultiplier(1.0);
-    } else if (preset === 'vip_rush') {
-      setDemandDeltaPct(10);
-      setPm1DowntimeHours(12);
-      setSafetyBufferDays(12);
-      setWashoutMultiplier(1.25);
+    const matching = scenarios.find((s) => {
+      if (preset === 'baseline') return s.id === 'baseline';
+      if (preset === 'peak_demand') return s.id === 'peak_demand';
+      if (preset === 'pm1_breakdown') return s.id === 'pm1_maintenance';
+      if (preset === 'vip_rush') return s.id === 'vip_luxury_rush';
+      return false;
+    });
+    if (matching) {
+      setActiveScenarioId(matching.id);
     }
   };
 
   const resetAssumptions = () => {
-    applyPreset('baseline');
+    setActiveScenarioId('baseline');
   };
 
-  // Memoized Forecast
+  // Sync helpers with active scenario
+  const demandDeltaPct = activeScenarioParams.demandDeltaPct;
+  const pm1DowntimeHours = activeScenarioParams.pm1DowntimeHours;
+  const safetyBufferDays = activeScenarioParams.safetyBufferDays;
+  const washoutMultiplier = activeScenarioParams.washoutMultiplier;
+
+  const setDemandDeltaPct = (pct: number) => {
+    updateScenarioParameters(activeScenarioId, { demandDeltaPct: pct });
+  };
+  const setPm1DowntimeHours = (hrs: number) => {
+    updateScenarioParameters(activeScenarioId, { pm1DowntimeHours: hrs });
+  };
+  const setSafetyBufferDays = (days: number) => {
+    updateScenarioParameters(activeScenarioId, { safetyBufferDays: days });
+  };
+  const setWashoutMultiplier = (m: number) => {
+    updateScenarioParameters(activeScenarioId, { washoutMultiplier: m });
+  };
+
+  // Live Memoized Forecast synced with active scenario parameters
   const forecastResult = useMemo(() => {
+    const shadeMultiplierWeight =
+      activeScenarioParams.whiteDemandMult * 0.5 +
+      activeScenarioParams.ivoryDemandMult * 0.25 +
+      activeScenarioParams.colorDemandMult * 0.25;
+
+    const effectiveDemandDelta = Math.round(
+      ((1 + activeScenarioParams.demandDeltaPct / 100) * shadeMultiplierWeight - 1) * 1000
+    ) / 10;
+
     return computeForecast(
       salesData.monthly_records,
       products,
       forecastHorizon,
-      demandDeltaPct
+      effectiveDemandDelta
     );
-  }, [salesData, products, forecastHorizon, demandDeltaPct]);
+  }, [salesData, products, forecastHorizon, activeScenarioParams]);
 
-  // Memoized Planning (Net requirements & machine loading)
+  // Live Memoized Planning synced with active scenario parameters
   const planningResult = useMemo(() => {
     const totalHorizonTonnes = forecastResult.forecastPoints.reduce(
       (sum, p) => sum + p.forecastTonnes,
@@ -137,21 +333,21 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       inventory,
       machineCapacity,
       totalHorizonTonnes,
-      safetyBufferDays,
-      pm1DowntimeHours,
-      0
+      activeScenarioParams.safetyBufferDays,
+      activeScenarioParams.pm1DowntimeHours,
+      activeScenarioParams.pm2DowntimeHours
     );
-  }, [products, inventory, machineCapacity, forecastResult, safetyBufferDays, pm1DowntimeHours]);
+  }, [products, inventory, machineCapacity, forecastResult, activeScenarioParams]);
 
-  // Memoized Sequence Optimization
+  // Live Memoized Sequence Optimization synced with active scenario parameters
   const optimizationResult = useMemo(() => {
     return optimizeSequence(
       upcomingOrders,
       selectedMachine,
-      washoutMultiplier,
-      2.4
+      activeScenarioParams.washoutMultiplier,
+      activeScenarioParams.brokeRateTph
     );
-  }, [upcomingOrders, selectedMachine, washoutMultiplier]);
+  }, [upcomingOrders, selectedMachine, activeScenarioParams]);
 
   return (
     <PlanningContext.Provider
@@ -169,6 +365,24 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setSelectedRunId,
         forecastHorizon,
         setForecastHorizon,
+
+        // Scenarios Workbench
+        scenarios,
+        activeScenarioId,
+        setActiveScenarioId,
+        activeScenario,
+        activeScenarioParams,
+        createScenario,
+        duplicateScenario,
+        updateScenario,
+        updateScenarioParameters,
+        deleteScenario,
+        resetScenarioToBaseline,
+        activeScenarioEvaluation,
+        allScenarioEvaluations,
+        baselineEvaluation,
+
+        // Backwards compatible bindings
         activePreset,
         applyPreset,
         demandDeltaPct,
@@ -180,6 +394,8 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         washoutMultiplier,
         setWashoutMultiplier,
         resetAssumptions,
+
+        // Synchronized Results
         forecastResult,
         planningResult,
         optimizationResult,
