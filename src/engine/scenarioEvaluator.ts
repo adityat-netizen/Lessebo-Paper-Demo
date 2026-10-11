@@ -9,6 +9,8 @@ import type {
   ScenarioEvaluation,
   FeasibilityStatus,
 } from '../types/scenarioWorkbench';
+import type { LossModelConfig } from '../types/lossModel';
+import { DEFAULT_LOSS_MODEL_CONFIG } from '../types/lossModel';
 import { computeForecast } from './forecastEngine';
 import { computeNetRequirements } from './planningEngine';
 import { optimizeSequence } from './sequenceOptimizer';
@@ -22,6 +24,37 @@ export function evaluateScenario(
   upcomingOrders: CampaignOrder[],
   forecastHorizonMonths: 3 | 6 | 12 = 3
 ): ScenarioEvaluation {
+  // Construct loss model configuration for this scenario
+  const lossModelConfig: LossModelConfig = {
+    ...DEFAULT_LOSS_MODEL_CONFIG,
+    brokeRateTph: params.brokeRateTph ?? DEFAULT_LOSS_MODEL_CONFIG.brokeRateTph,
+    grammageStepMultiplier: params.grammageStepMultiplier ?? DEFAULT_LOSS_MODEL_CONFIG.grammageStepMultiplier,
+    formatSwitchMultiplier: params.formatSwitchMultiplier ?? DEFAULT_LOSS_MODEL_CONFIG.formatSwitchMultiplier,
+    enableQualityRejects: params.enableQualityRejects ?? DEFAULT_LOSS_MODEL_CONFIG.enableQualityRejects,
+    enableConvertingLoss: params.enableConvertingLoss ?? DEFAULT_LOSS_MODEL_CONFIG.enableConvertingLoss,
+    enableLotRounding: params.enableLotRounding ?? DEFAULT_LOSS_MODEL_CONFIG.enableLotRounding,
+    enableSlowMoverFlag: params.enableSlowMoverFlag ?? DEFAULT_LOSS_MODEL_CONFIG.enableSlowMoverFlag,
+    enableBrokeRecycling: params.enableBrokeRecycling ?? DEFAULT_LOSS_MODEL_CONFIG.enableBrokeRecycling,
+    trimLossSheetsPct: params.trimLossSheetsPct ?? DEFAULT_LOSS_MODEL_CONFIG.trimLossSheetsPct,
+    trimLossReelsPct: params.trimLossReelsPct ?? DEFAULT_LOSS_MODEL_CONFIG.trimLossReelsPct,
+    webBreakRateLightGsmPct: params.webBreakRateLightGsmPct ?? DEFAULT_LOSS_MODEL_CONFIG.webBreakRateLightGsmPct,
+    maxFurnishRecycleCeilingPct: params.maxFurnishRecycleCeilingPct ?? DEFAULT_LOSS_MODEL_CONFIG.maxFurnishRecycleCeilingPct,
+  };
+
+  if (params.enableWasteModel === false) {
+    lossModelConfig.enableChangeoverLoss = false;
+    lossModelConfig.enableStartupLoss = false;
+    lossModelConfig.enableWashoutCleaningLoss = false;
+    lossModelConfig.enableWebBreakLoss = false;
+    lossModelConfig.enableQualityRejects = false;
+    lossModelConfig.enableTrimLoss = false;
+    lossModelConfig.enableConvertingLoss = false;
+    lossModelConfig.enableForecastErrorBuffer = false;
+    lossModelConfig.enableLotRounding = false;
+    lossModelConfig.enableSlowMoverFlag = false;
+    lossModelConfig.enableBrokeRecycling = false;
+  }
+
   // 1. Forecast calculation with shade adjustments
   const shadeMultiplierWeight =
     (params.whiteDemandMult * 0.5 +
@@ -43,7 +76,9 @@ export function evaluateScenario(
     forecast.forecastPoints.reduce((sum, pt) => sum + pt.forecastTonnes, 0) * 10
   ) / 10;
 
-  // 2. Planning calculation with downtime and safety buffer
+  const horizonMonths = forecastHorizonMonths || 3;
+
+  // 2. Planning calculation with gross production requirements and loss model
   const planning = computeNetRequirements(
     products,
     inventory,
@@ -51,21 +86,16 @@ export function evaluateScenario(
     totalForecastTonnes,
     params.safetyBufferDays,
     params.pm1DowntimeHours,
-    params.pm2DowntimeHours
+    params.pm2DowntimeHours,
+    lossModelConfig,
+    horizonMonths
   );
 
   // 3. Machine Available and Required Hours adjusted by speed factor
   const speed = Math.max(0.5, Math.min(2.0, params.productionSpeedMultiplier || 1.0));
-  const horizonMonths = forecastHorizonMonths || 3;
 
-  const pm1NetAvailableHours = Math.max(
-    1,
-    Math.round(planning.machineLoading.PM1.netAvailableHours * horizonMonths * 10) / 10
-  );
-  const pm2NetAvailableHours = Math.max(
-    1,
-    Math.round(planning.machineLoading.PM2.netAvailableHours * horizonMonths * 10) / 10
-  );
+  const pm1NetAvailableHours = Math.max(1, planning.machineLoading.PM1.netAvailableHours);
+  const pm2NetAvailableHours = Math.max(1, planning.machineLoading.PM2.netAvailableHours);
 
   const pm1RequiredHours = Math.round(
     (planning.machineLoading.PM1.totalRunHoursRequired / speed) * 10
@@ -87,12 +117,13 @@ export function evaluateScenario(
     (totalRequired / totalAvailable) * 1000
   ) / 10;
 
-  // 4. Sequencing calculations (PM1 as hero machine, evaluated against changeover parameters)
+  // 4. Sequencing calculations (PM1 as hero machine, evaluated against changeover parameters and loss model)
   const sequence = optimizeSequence(
     upcomingOrders,
     'PM1',
     params.washoutMultiplier,
-    params.brokeRateTph
+    params.brokeRateTph,
+    lossModelConfig
   );
 
   const totalChangeoverHours = sequence.optimized.metrics.totalChangeoverHours;
@@ -128,6 +159,11 @@ export function evaluateScenario(
   let feasibilityStatus: FeasibilityStatus = 'Feasible';
   let feasibilityReason = 'Plan is fully feasible with healthy capacity headroom.';
 
+  const brokeRecycleExceeded =
+    lossModelConfig.enableBrokeRecycling &&
+    (sequence.optimized.metrics.brokeRecycleExceeded ||
+      (sequence.optimized.metrics.brokeFurnishPct ?? 0) > (lossModelConfig.maxFurnishRecycleCeilingPct ?? 15));
+
   if (pm1UtilizationPct > 115 || pm2UtilizationPct > 115 || combinedUtilizationPct > 110) {
     feasibilityStatus = 'Infeasible';
     feasibilityReason = `Excess capacity demand: PM1 at ${pm1UtilizationPct}%, PM2 at ${pm2UtilizationPct}%. Schedule cannot be fulfilled without unassigned overtime or load shifting.`;
@@ -136,18 +172,33 @@ export function evaluateScenario(
     pm2UtilizationPct > 95 ||
     combinedUtilizationPct > 92 ||
     ordersAtRiskCount >= 3 ||
-    slaCompliancePct < 90
+    slaCompliancePct < 90 ||
+    brokeRecycleExceeded
   ) {
     feasibilityStatus = 'Capacity-Constrained';
-    feasibilityReason = `High machine utilization (${combinedUtilizationPct}%) with ${ordersAtRiskCount} order(s) near SLA deadline threshold.`;
+    if (brokeRecycleExceeded) {
+      feasibilityReason = `Furnish broke recycling ratio (${(sequence.optimized.metrics.brokeFurnishPct ?? 0).toFixed(1)}%) exceeds maximum safe repulping ceiling (${lossModelConfig.maxFurnishRecycleCeilingPct}%). Excess broke cannot be repulped without off-spec risk.`;
+    } else {
+      feasibilityReason = `High machine utilization (${combinedUtilizationPct}%) with ${ordersAtRiskCount} order(s) near SLA deadline threshold.`;
+    }
   } else {
     feasibilityStatus = 'Feasible';
     feasibilityReason = `Balanced loading across both machines (${combinedUtilizationPct}% combined). All changeover sequences and customer delivery SLAs accommodated.`;
   }
 
+  const grossRequiredTonnes = planning.totalGrossTonnageRequired ?? planning.totalProductionTonnageRequired;
+  const totalYieldLossTonnes = planning.totalLossTonnes ?? 0;
+  const totalYieldPct =
+    grossRequiredTonnes > 0
+      ? Math.round((planning.totalProductionTonnageRequired / grossRequiredTonnes) * 1000) / 10
+      : 100;
+
   return {
     totalForecastTonnes,
     netRequiredTonnes: planning.totalProductionTonnageRequired,
+    grossRequiredTonnes,
+    totalYieldLossTonnes,
+    totalYieldPct,
     pm1NetAvailableHours,
     pm2NetAvailableHours,
     pm1RequiredHours,
@@ -164,5 +215,8 @@ export function evaluateScenario(
     ordersAtRiskCount,
     feasibilityStatus,
     feasibilityReason,
+    washoutWaterM3: sequence.optimized.metrics.totalWashoutWaterM3 ?? 0,
+    brokeFurnishPct: sequence.optimized.metrics.brokeFurnishPct ?? 0,
+    brokeRecycleExceeded,
   };
 }

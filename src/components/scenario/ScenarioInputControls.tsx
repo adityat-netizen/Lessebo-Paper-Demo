@@ -38,6 +38,7 @@ export const ScenarioInputControls: React.FC = () => {
     capacity: true,
     changeover: true,
     costs: true,
+    waste: true,
   });
 
   const toggleSection = (key: string) => {
@@ -759,6 +760,200 @@ export const ScenarioInputControls: React.FC = () => {
                   style={{ width: '100%', accentColor: '#D97706', opacity: isLocked ? 0.6 : 1 }}
                 />
                 <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Pulp fiber degradation, energy &amp; chemicals to re-slush</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Section 5: Configurable Waste & Yield Loss Model */}
+        <div style={{ border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+          <div
+            onClick={() => toggleSection('waste')}
+            style={{
+              padding: '12px 18px',
+              background: '#F8FAFC',
+              cursor: 'pointer',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              userSelect: 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <SlidersHorizontal size={16} color="var(--brand-blue)" />
+              <span style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--navy-dark)' }}>
+                5. Waste &amp; Yield Loss Model Controls (Client Input Required)
+              </span>
+            </div>
+            {openSections.waste ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </div>
+
+          {openSections.waste && (
+            <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', background: '#F0F9FF', padding: '12px 16px', borderRadius: '6px', border: '1px solid #BAE6FD' }}>
+                <div>
+                  <strong style={{ fontSize: '0.84rem', color: 'var(--navy-dark)' }}>
+                    Active Yield Loss Calculation Mode
+                  </strong>
+                  <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>
+                    When enabled, production requirement is sized as <strong>GROSS = Net + Expected Yield Losses</strong> across 11 components.
+                  </p>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: isLocked ? 'default' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    disabled={isLocked}
+                    checked={activeScenarioParams.enableWasteModel !== false}
+                    onChange={(e) => updateScenarioParameters(activeScenario.id, { enableWasteModel: e.target.checked })}
+                    style={{ width: '16px', height: '16px', accentColor: 'var(--brand-blue)' }}
+                  />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--navy-dark)' }}>
+                    {activeScenarioParams.enableWasteModel !== false ? 'Gross Production (Loss Model ON)' : 'Net Only (Loss Model OFF)'}
+                  </span>
+                </label>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
+                {/* Deckle Trim Loss Sheets */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--navy-dark)' }}>
+                        Deckle Trim Loss (Sheets)
+                      </label>
+                      <ClientInputBadge parameterName="Deckle Trim Loss" />
+                    </div>
+                    <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--brand-blue)' }}>
+                      {(activeScenarioParams.trimLossSheetsPct ?? 3.4).toFixed(1)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1.0"
+                    max="6.0"
+                    step="0.2"
+                    disabled={isLocked}
+                    value={activeScenarioParams.trimLossSheetsPct ?? 3.4}
+                    onChange={(e) => updateScenarioParameters(activeScenario.id, { trimLossSheetsPct: Number(e.target.value) })}
+                    style={{ width: '100%', accentColor: 'var(--brand-blue)', opacity: isLocked ? 0.6 : 1 }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Slitter edge scrap by sheet format</span>
+                </div>
+
+                {/* Web-Break Broke Light GSM */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--navy-dark)' }}>
+                        Web-Break Rate (≤100 GSM)
+                      </label>
+                      <ClientInputBadge parameterName="Web-Break Rate" />
+                    </div>
+                    <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#D97706' }}>
+                      {(activeScenarioParams.webBreakRateLightGsmPct ?? 2.2).toFixed(1)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1.0"
+                    max="4.0"
+                    step="0.2"
+                    disabled={isLocked}
+                    value={activeScenarioParams.webBreakRateLightGsmPct ?? 2.2}
+                    onChange={(e) => updateScenarioParameters(activeScenario.id, { webBreakRateLightGsmPct: Number(e.target.value) })}
+                    style={{ width: '100%', accentColor: '#D97706', opacity: isLocked ? 0.6 : 1 }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Lightweight sheet web break broke rate</span>
+                </div>
+
+                {/* Max Furnish Broke Ceiling */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--navy-dark)' }}>
+                        Max Furnish Recycle Ceiling
+                      </label>
+                      <ClientInputBadge parameterName="Furnish Broke Ceiling" />
+                    </div>
+                    <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--brand-blue)' }}>
+                      {(activeScenarioParams.maxFurnishRecycleCeilingPct ?? 15.0).toFixed(0)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10.0"
+                    max="25.0"
+                    step="1.0"
+                    disabled={isLocked}
+                    value={activeScenarioParams.maxFurnishRecycleCeilingPct ?? 15.0}
+                    onChange={(e) => updateScenarioParameters(activeScenario.id, { maxFurnishRecycleCeilingPct: Number(e.target.value) })}
+                    style={{ width: '100%', accentColor: 'var(--brand-blue)', opacity: isLocked ? 0.6 : 1 }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Safe repulping limit before sheet degradation</span>
+                </div>
+              </div>
+
+              {/* Advanced Loss Component Toggles */}
+              <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '14px' }}>
+                <span style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--navy-dark)', display: 'block', marginBottom: '10px' }}>
+                  Optional Loss Modules (Generic Placeholders - Client Input Required):
+                </span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', cursor: isLocked ? 'default' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      disabled={isLocked}
+                      checked={!!activeScenarioParams.enableQualityRejects}
+                      onChange={(e) => updateScenarioParameters(activeScenario.id, { enableQualityRejects: e.target.checked })}
+                      style={{ accentColor: 'var(--brand-blue)' }}
+                    />
+                    <span>Comp 5: Quality Rejects</span>
+                  </label>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', cursor: isLocked ? 'default' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      disabled={isLocked}
+                      checked={!!activeScenarioParams.enableConvertingLoss}
+                      onChange={(e) => updateScenarioParameters(activeScenario.id, { enableConvertingLoss: e.target.checked })}
+                      style={{ accentColor: 'var(--brand-blue)' }}
+                    />
+                    <span>Comp 7: Converting &amp; Finishing</span>
+                  </label>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', cursor: isLocked ? 'default' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      disabled={isLocked}
+                      checked={!!activeScenarioParams.enableLotRounding}
+                      onChange={(e) => updateScenarioParameters(activeScenario.id, { enableLotRounding: e.target.checked })}
+                      style={{ accentColor: 'var(--brand-blue)' }}
+                    />
+                    <span>Comp 9: Lot Size Rounding</span>
+                  </label>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', cursor: isLocked ? 'default' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      disabled={isLocked}
+                      checked={!!activeScenarioParams.enableSlowMoverFlag}
+                      onChange={(e) => updateScenarioParameters(activeScenario.id, { enableSlowMoverFlag: e.target.checked })}
+                      style={{ accentColor: 'var(--brand-blue)' }}
+                    />
+                    <span>Comp 10: Slow-Mover Flag</span>
+                  </label>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', cursor: isLocked ? 'default' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      disabled={isLocked}
+                      checked={!!activeScenarioParams.enableBrokeRecycling}
+                      onChange={(e) => updateScenarioParameters(activeScenario.id, { enableBrokeRecycling: e.target.checked })}
+                      style={{ accentColor: 'var(--brand-blue)' }}
+                    />
+                    <span>Comp 11: Broke Recycle Ceiling</span>
+                  </label>
+                </div>
               </div>
             </div>
           )}

@@ -83,6 +83,22 @@ export const ExecutiveDashboard: React.FC = () => {
         unit: '%',
         description: 'Percentage of customer campaign orders delivered within due window',
       },
+      {
+        kpi_category: 'Environmental Sustainability',
+        metric_name: 'Washout Effluent Water Saved',
+        campaign_value: savings.waterSavedM3 ?? 0,
+        annualized_value: Math.round((savings.waterSavedM3 ?? 0) * 26),
+        unit: 'm3',
+        description: 'Chest chemical wash volume avoided through sequence scheduling',
+      },
+      {
+        kpi_category: 'Fiber Furnish Health',
+        metric_name: 'Broke Furnish Recycling Ratio',
+        campaign_value: optimizationResult.optimized.metrics.brokeFurnishPct ?? 0,
+        annualized_value: optimizationResult.optimized.metrics.brokeFurnishPct ?? 0,
+        unit: '%',
+        description: 'Broke fiber generation as share of campaign gross furnish (Ceiling: 15%)',
+      },
     ];
 
     const csv = buildCsvContent(

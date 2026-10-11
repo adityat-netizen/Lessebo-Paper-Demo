@@ -24,6 +24,18 @@ export interface ScenarioParameters {
   // 5. Cost Parameters
   hourlyOperatingCostEur: number; // 300 to 800 EUR/h (Client input required)
   brokeCostPerTonneEur: number; // 150 to 450 EUR/t (Client input required)
+
+  // 6. Waste & Yield Loss Parameters (Client input required - Generic placeholders)
+  enableWasteModel?: boolean;
+  enableQualityRejects?: boolean;
+  enableConvertingLoss?: boolean;
+  enableLotRounding?: boolean;
+  enableSlowMoverFlag?: boolean;
+  enableBrokeRecycling?: boolean;
+  trimLossSheetsPct?: number;
+  trimLossReelsPct?: number;
+  webBreakRateLightGsmPct?: number;
+  maxFurnishRecycleCeilingPct?: number;
 }
 
 export type FeasibilityStatus = 'Feasible' | 'Capacity-Constrained' | 'Infeasible';
@@ -31,6 +43,9 @@ export type FeasibilityStatus = 'Feasible' | 'Capacity-Constrained' | 'Infeasibl
 export interface ScenarioEvaluation {
   totalForecastTonnes: number;
   netRequiredTonnes: number;
+  grossRequiredTonnes: number;
+  totalYieldLossTonnes: number;
+  totalYieldPct: number;
   pm1NetAvailableHours: number;
   pm2NetAvailableHours: number;
   pm1RequiredHours: number;
@@ -47,6 +62,9 @@ export interface ScenarioEvaluation {
   ordersAtRiskCount: number;
   feasibilityStatus: FeasibilityStatus;
   feasibilityReason: string;
+  washoutWaterM3?: number;
+  brokeFurnishPct?: number;
+  brokeRecycleExceeded?: boolean;
 }
 
 export interface ScenarioDefinition {
@@ -76,6 +94,16 @@ export const BASELINE_PARAMETERS: ScenarioParameters = {
   brokeRateTph: 2.4,
   hourlyOperatingCostEur: 480,
   brokeCostPerTonneEur: 280,
+  enableWasteModel: true,
+  enableQualityRejects: false,
+  enableConvertingLoss: false,
+  enableLotRounding: false,
+  enableSlowMoverFlag: false,
+  enableBrokeRecycling: false,
+  trimLossSheetsPct: 3.4,
+  trimLossReelsPct: 1.8,
+  webBreakRateLightGsmPct: 2.2,
+  maxFurnishRecycleCeilingPct: 15.0,
 };
 
 export const INITIAL_SCENARIOS: ScenarioDefinition[] = [

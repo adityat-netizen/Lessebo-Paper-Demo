@@ -90,6 +90,11 @@ export const ScenarioAnalysisView: React.FC = () => {
               BrokeRate: `${activeScenarioParams.brokeRateTph} t/h (Client input required)`,
               HourlyMachineCost: `€${activeScenarioParams.hourlyOperatingCostEur}/h (Client input required)`,
               BrokeScrapCost: `€${activeScenarioParams.brokeCostPerTonneEur}/t (Client input required)`,
+              GrossProductionRequirement: `${activeScenarioEvaluation.grossRequiredTonnes ?? activeScenarioEvaluation.netRequiredTonnes} tonnes`,
+              TotalExpectedYieldLoss: `${(activeScenarioEvaluation.totalYieldLossTonnes ?? 0).toFixed(1)} tonnes`,
+              FirstPassYield: `${(activeScenarioEvaluation.totalYieldPct ?? 100).toFixed(1)}%`,
+              WashoutEffluentWater: `${activeScenarioEvaluation.washoutWaterM3 ?? 0} m3`,
+              BrokeFurnishRecyclingRatio: `${(activeScenarioEvaluation.brokeFurnishPct ?? 0).toFixed(1)}%`,
               CombinedUtilization: `${activeScenarioEvaluation.combinedUtilizationPct}%`,
               TotalChangeoverHours: `${activeScenarioEvaluation.totalChangeoverHours}h`,
               TotalBrokeScrap: `${activeScenarioEvaluation.totalBrokeTonnes}t`,
@@ -167,11 +172,16 @@ export const ScenarioAnalysisView: React.FC = () => {
         const rows = [
           makeRow('Feasibility Status', 'Status', (ev) => ev.feasibilityStatus, false),
           makeRow('Net Production Demand', 'tonnes', (ev) => ev.netRequiredTonnes),
+          makeRow('Gross Production Requirement', 'tonnes', (ev) => ev.grossRequiredTonnes ?? ev.netRequiredTonnes),
+          makeRow('Total Expected Yield Losses', 'tonnes', (ev) => ev.totalYieldLossTonnes ?? 0),
+          makeRow('First-Pass Yield Efficiency', '%', (ev) => ev.totalYieldPct ?? 100),
           makeRow('Combined Machine Utilization', '%', (ev) => ev.combinedUtilizationPct),
           makeRow('PM1 Machine Loading Utilization', '%', (ev) => ev.pm1UtilizationPct),
           makeRow('PM2 Machine Loading Utilization', '%', (ev) => ev.pm2UtilizationPct),
           makeRow('Optimized Changeover Duration', 'hours', (ev) => ev.totalChangeoverHours),
           makeRow('Transition Broke Scrap', 'tonnes', (ev) => ev.totalBrokeTonnes),
+          makeRow('Washout Cleaning Effluent Water', 'm3', (ev) => ev.washoutWaterM3 ?? 0),
+          makeRow('Broke Furnish Recycling Ratio', '%', (ev) => ev.brokeFurnishPct ?? 0),
           makeRow('Estimated Total Financial Cost', 'EUR', (ev) => ev.totalFinancialCostEur),
           makeRow('Customer SLA On-Time Compliance', '%', (ev) => ev.slaCompliancePct),
           makeRow('Orders Near / At Risk of Delay', 'orders', (ev) => ev.ordersAtRiskCount),
@@ -516,6 +526,15 @@ export const ScenarioAnalysisView: React.FC = () => {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
           <MetricCard
+            label="Gross Production Requirement"
+            value={`${(eval_.grossRequiredTonnes ?? eval_.netRequiredTonnes).toLocaleString()} t`}
+            unit={`Net Need: ${eval_.netRequiredTonnes.toLocaleString()} t`}
+            sublabel={`Includes +${(eval_.totalYieldLossTonnes ?? 0).toFixed(1)} t expected yield losses`}
+            variant="highlight"
+            badgeText={`${(eval_.totalYieldPct ?? 100).toFixed(1)}% Yield`}
+          />
+
+          <MetricCard
             label="Combined Machine Utilization"
             value={`${eval_.combinedUtilizationPct}%`}
             unit={`PM1: ${eval_.pm1UtilizationPct}% | PM2: ${eval_.pm2UtilizationPct}%`}
@@ -543,6 +562,19 @@ export const ScenarioAnalysisView: React.FC = () => {
             unit="Fiber Waste"
             sublabel={`Valued at €${eval_.totalBrokeCostEur.toLocaleString()} scrap recovery cost`}
             variant="warning"
+          />
+
+          <MetricCard
+            label="Effluent Water & Broke Furnish"
+            value={`${(eval_.washoutWaterM3 ?? 0).toFixed(0)} m³`}
+            unit={`Broke Furnish: ${(eval_.brokeFurnishPct ?? 0).toFixed(1)}%`}
+            sublabel={
+              eval_.brokeRecycleExceeded
+                ? 'Furnish ceiling exceeded! Repulping alert'
+                : 'Within safe furnish repulping ceiling'
+            }
+            variant={eval_.brokeRecycleExceeded ? 'warning' : 'default'}
+            badgeText={eval_.brokeRecycleExceeded ? 'Ceiling Alert' : 'Furnish Safe'}
           />
 
           <MetricCard

@@ -136,6 +136,8 @@ export interface CampaignOrder {
   order_value_eur: number;
 }
 
+import type { SkuLossBreakdown } from './lossModel';
+
 export interface ChangeoverBreakdown {
   baseSetup: number;
   washoutHours: number;
@@ -144,6 +146,11 @@ export interface ChangeoverBreakdown {
   totalHours: number;
   isWashout: boolean;
   brokeTonnes: number;
+  colorBrokeTonnes?: number;
+  grammageBrokeTonnes?: number;
+  formatBrokeTonnes?: number;
+  startupBrokeTonnes?: number;
+  washoutWaterM3?: number;
   reason: string;
 }
 
@@ -174,6 +181,12 @@ export interface ScheduleMetrics {
   totalBrokeCostEur: number;
   slaCompliancePct: number;
   totalSpanHours: number;
+  sequenceDependentLossTonnes?: number;
+  nonSequenceLossTonnes?: number;
+  totalWasteTonnes?: number;
+  totalWashoutWaterM3?: number;
+  brokeRecycleExceeded?: boolean;
+  brokeFurnishPct?: number;
 }
 
 export interface OptimizationComparison {
@@ -191,6 +204,7 @@ export interface OptimizationComparison {
     capacityReleasedHours: number;
     financialSavingsEur: number;
     washoutsAvoided: number;
+    waterSavedM3?: number;
   };
 }
 
@@ -210,6 +224,13 @@ export interface NetRequirement {
   safetyStockTargetTonnes: number;
   netProductionRequirementTonnes: number;
   requiredMachineHours: number;
+  grossProductionRequirementTonnes?: number;
+  totalLossTonnes?: number;
+  grossMachineHours?: number;
+  lossBreakdown?: SkuLossBreakdown;
+  inventoryCoverWeeks?: number;
+  isSlowMover?: boolean;
+  excessStockTonnes?: number;
   status: 'Surplus' | 'Balanced' | 'Production Needed';
 }
 

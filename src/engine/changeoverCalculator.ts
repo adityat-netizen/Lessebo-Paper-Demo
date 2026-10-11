@@ -1,13 +1,21 @@
 import type { CampaignOrder, ChangeoverBreakdown } from '../types';
+import type { LossModelConfig } from '../types/lossModel';
 
 export function calculateChangeover(
   fromRun: CampaignOrder | null,
   toRun: CampaignOrder,
   washoutMultiplier: number = 1.0,
-  brokeRateTph: number = 2.4
+  brokeRateTph: number = 2.4,
+  config?: LossModelConfig
 ): ChangeoverBreakdown {
+  const effectiveBrokeRate = config ? config.brokeRateTph : brokeRateTph;
+  const enableChangeover = config ? config.enableChangeoverLoss : true;
+  const startupBrokeTonnes = config && config.enableStartupLoss ? config.startupLossTonnesPerRun : 0;
+
   if (!fromRun) {
     // Starting run of the schedule (clean start)
+    const baseBroke = enableChangeover ? Math.round(0.5 * effectiveBrokeRate * 10) / 10 : 0;
+    const totalBroke = Math.round((baseBroke + startupBrokeTonnes) * 10) / 10;
     return {
       baseSetup: 0.5,
       washoutHours: 0.0,
@@ -15,7 +23,12 @@ export function calculateChangeover(
       formatHours: 0.0,
       totalHours: 0.5,
       isWashout: false,
-      brokeTonnes: Math.round(0.5 * brokeRateTph * 10) / 10,
+      brokeTonnes: totalBroke,
+      colorBrokeTonnes: 0,
+      grammageBrokeTonnes: 0,
+      formatBrokeTonnes: 0,
+      startupBrokeTonnes,
+      washoutWaterM3: 0,
       reason: 'Schedule initial start & calibration run',
     };
   }
@@ -86,7 +99,34 @@ export function calculateChangeover(
   }
 
   const totalHours = Math.round((baseSetup + washoutHours + grammageHours + formatHours) * 100) / 100;
-  const brokeTonnes = Math.round(totalHours * brokeRateTph * 10) / 10;
+
+  // Itemized broke calculations
+  const colorBrokeTonnes = enableChangeover
+    ? Math.round(washoutHours * effectiveBrokeRate * (config?.colorTransitionMultiplier ?? 1.0) * 10) / 10
+    : 0;
+  const grammageBrokeTonnes = enableChangeover
+    ? Math.round(grammageHours * effectiveBrokeRate * (config?.grammageStepMultiplier ?? 1.0) * 10) / 10
+    : 0;
+  const formatBrokeTonnes = enableChangeover
+    ? Math.round(formatHours * effectiveBrokeRate * (config?.formatSwitchMultiplier ?? 1.0) * 10) / 10
+    : 0;
+  const baseBrokeTonnes = enableChangeover
+    ? Math.round(baseSetup * effectiveBrokeRate * 10) / 10
+    : 0;
+
+  let washoutWaterM3 = 0;
+  const enableWashoutWater = config ? config.enableWashoutCleaningLoss : true;
+  if (enableWashoutWater) {
+    if (isWashout) {
+      washoutWaterM3 = config ? config.waterPerWashoutM3 : 18.0;
+    } else if (washoutHours > 0) {
+      washoutWaterM3 = config ? config.waterPerMinorWashM3 : 6.0;
+    }
+  }
+
+  const brokeTonnes = Math.round(
+    (baseBrokeTonnes + colorBrokeTonnes + grammageBrokeTonnes + formatBrokeTonnes + startupBrokeTonnes) * 10
+  ) / 10;
 
   return {
     baseSetup,
@@ -96,6 +136,11 @@ export function calculateChangeover(
     totalHours,
     isWashout,
     brokeTonnes,
+    colorBrokeTonnes,
+    grammageBrokeTonnes,
+    formatBrokeTonnes,
+    startupBrokeTonnes,
+    washoutWaterM3,
     reason: reasons.length > 0 ? reasons.join('; ') : 'Smooth transition (compatible shade & format)',
   };
 }

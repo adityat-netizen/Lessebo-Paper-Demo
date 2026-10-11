@@ -93,11 +93,16 @@ export const ScenarioComparisonTable: React.FC = () => {
     const rows = [
       makeRow('Feasibility Status', 'Status', (ev) => ev.feasibilityStatus, false),
       makeRow('Net Production Demand', 'tonnes', (ev) => ev.netRequiredTonnes),
+      makeRow('Gross Production Requirement', 'tonnes', (ev) => ev.grossRequiredTonnes ?? ev.netRequiredTonnes),
+      makeRow('Total Expected Yield Losses', 'tonnes', (ev) => ev.totalYieldLossTonnes ?? 0),
+      makeRow('First-Pass Yield Efficiency', '%', (ev) => ev.totalYieldPct ?? 100),
       makeRow('Combined Machine Utilization', '%', (ev) => ev.combinedUtilizationPct),
       makeRow('PM1 Machine Loading Utilization', '%', (ev) => ev.pm1UtilizationPct),
       makeRow('PM2 Machine Loading Utilization', '%', (ev) => ev.pm2UtilizationPct),
       makeRow('Optimized Changeover Duration', 'hours', (ev) => ev.totalChangeoverHours),
       makeRow('Transition Broke Scrap', 'tonnes', (ev) => ev.totalBrokeTonnes),
+      makeRow('Washout Cleaning Effluent Water', 'm3', (ev) => ev.washoutWaterM3 ?? 0),
+      makeRow('Broke Furnish Recycling Ratio', '%', (ev) => ev.brokeFurnishPct ?? 0),
       makeRow('Estimated Total Financial Cost', 'EUR', (ev) => ev.totalFinancialCostEur),
       makeRow('Customer SLA On-Time Compliance', '%', (ev) => ev.slaCompliancePct),
       makeRow('Orders Near / At Risk of Delay', 'orders', (ev) => ev.ordersAtRiskCount),
@@ -514,6 +519,137 @@ export const ScenarioComparisonTable: React.FC = () => {
               })}
             </tr>
 
+            {/* Row 2b: Gross Production Requirement */}
+            <tr style={{ borderBottom: '1px solid var(--border-light)', background: '#F0FAFD' }}>
+              <td
+                style={{
+                  padding: '12px 20px',
+                  fontWeight: 700,
+                  color: 'var(--brand-blue)',
+                  position: 'sticky',
+                  left: 0,
+                  background: '#F0FAFD',
+                  zIndex: 1,
+                }}
+              >
+                <div>Gross Production Requirement</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Net demand + expected yield losses</div>
+              </td>
+              {displayedScenarios.map((s) => {
+                const eval_ = allScenarioEvaluations[s.id] || baselineEvaluation;
+                const grossVal = eval_.grossRequiredTonnes ?? eval_.netRequiredTonnes;
+                const baseGrossVal = baselineEvaluation.grossRequiredTonnes ?? baselineEvaluation.netRequiredTonnes;
+                return (
+                  <td
+                    key={s.id}
+                    style={{
+                      padding: '12px 20px',
+                      borderLeft: '1px solid var(--border-light)',
+                      fontWeight: 800,
+                      color: 'var(--brand-blue)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    <span>{grossVal.toLocaleString()} t</span>
+                    {s.id !== 'baseline' &&
+                      renderDelta(
+                        grossVal,
+                        baseGrossVal,
+                        't',
+                        false
+                      )}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Row 2c: Total Expected Yield Losses */}
+            <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+              <td
+                style={{
+                  padding: '12px 20px',
+                  fontWeight: 600,
+                  color: 'var(--navy-dark)',
+                  position: 'sticky',
+                  left: 0,
+                  background: '#FFFFFF',
+                  zIndex: 1,
+                }}
+              >
+                <div>Total Expected Yield Losses</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Trim, web-breaks, broke, setup</div>
+              </td>
+              {displayedScenarios.map((s) => {
+                const eval_ = allScenarioEvaluations[s.id] || baselineEvaluation;
+                const lossVal = eval_.totalYieldLossTonnes ?? 0;
+                const baseLossVal = baselineEvaluation.totalYieldLossTonnes ?? 0;
+                return (
+                  <td
+                    key={s.id}
+                    style={{
+                      padding: '12px 20px',
+                      borderLeft: '1px solid var(--border-light)',
+                      fontWeight: 700,
+                      color: lossVal > 0 ? '#D97706' : 'var(--text-primary)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    <span>{lossVal.toFixed(1)} t</span>
+                    {s.id !== 'baseline' &&
+                      renderDelta(
+                        lossVal,
+                        baseLossVal,
+                        't',
+                        true
+                      )}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Row 2d: First-Pass Yield Efficiency */}
+            <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+              <td
+                style={{
+                  padding: '10px 20px',
+                  color: 'var(--text-secondary)',
+                  paddingLeft: '32px',
+                  position: 'sticky',
+                  left: 0,
+                  background: '#FFFFFF',
+                  zIndex: 1,
+                }}
+              >
+                First-Pass Yield Efficiency (Net / Gross)
+              </td>
+              {displayedScenarios.map((s) => {
+                const eval_ = allScenarioEvaluations[s.id] || baselineEvaluation;
+                const yieldPct = eval_.totalYieldPct ?? 100;
+                const baseYieldPct = baselineEvaluation.totalYieldPct ?? 100;
+                return (
+                  <td
+                    key={s.id}
+                    style={{
+                      padding: '10px 20px',
+                      borderLeft: '1px solid var(--border-light)',
+                      color: yieldPct < 90 ? '#D97706' : 'var(--success-green)',
+                      fontWeight: 600,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    <span>{yieldPct.toFixed(1)}%</span>
+                    {s.id !== 'baseline' &&
+                      renderDelta(
+                        yieldPct,
+                        baseYieldPct,
+                        '%',
+                        false
+                      )}
+                  </td>
+                );
+              })}
+            </tr>
+
             {/* Row 3: Combined Machine Utilization */}
             <tr style={{ borderBottom: '1px solid var(--border-light)', background: '#FAFCFD' }}>
               <td
@@ -698,6 +834,111 @@ export const ScenarioComparisonTable: React.FC = () => {
                         eval_.totalBrokeTonnes,
                         baselineEvaluation.totalBrokeTonnes,
                         't',
+                        true
+                      )}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Row 7b: Washout Cleaning Effluent Water */}
+            <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+              <td
+                style={{
+                  padding: '12px 20px',
+                  fontWeight: 600,
+                  color: 'var(--navy-dark)',
+                  position: 'sticky',
+                  left: 0,
+                  background: '#FFFFFF',
+                  zIndex: 1,
+                }}
+              >
+                <div>Washout Effluent Water Loss</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Chest chemical flush volume</div>
+              </td>
+              {displayedScenarios.map((s) => {
+                const eval_ = allScenarioEvaluations[s.id] || baselineEvaluation;
+                const waterVal = eval_.washoutWaterM3 ?? 0;
+                const baseWaterVal = baselineEvaluation.washoutWaterM3 ?? 0;
+                return (
+                  <td
+                    key={s.id}
+                    style={{
+                      padding: '12px 20px',
+                      borderLeft: '1px solid var(--border-light)',
+                      fontWeight: 700,
+                      color: 'var(--cyan-accent)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    <span>{waterVal.toFixed(0)} m³</span>
+                    {s.id !== 'baseline' &&
+                      renderDelta(
+                        waterVal,
+                        baseWaterVal,
+                        'm³',
+                        true
+                      )}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Row 7c: Broke Furnish Recycling Ratio */}
+            <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+              <td
+                style={{
+                  padding: '12px 20px',
+                  fontWeight: 600,
+                  color: 'var(--navy-dark)',
+                  position: 'sticky',
+                  left: 0,
+                  background: '#FFFFFF',
+                  zIndex: 1,
+                }}
+              >
+                <div>Broke Furnish Recycling Ratio</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Broke as % of gross furnish (Max ceiling ~15%)</div>
+              </td>
+              {displayedScenarios.map((s) => {
+                const eval_ = allScenarioEvaluations[s.id] || baselineEvaluation;
+                const brokePct = eval_.brokeFurnishPct ?? 0;
+                const baseBrokePct = baselineEvaluation.brokeFurnishPct ?? 0;
+                const isExceeded = !!eval_.brokeRecycleExceeded;
+                return (
+                  <td
+                    key={s.id}
+                    style={{
+                      padding: '12px 20px',
+                      borderLeft: '1px solid var(--border-light)',
+                      fontWeight: 700,
+                      color: isExceeded ? '#DC2626' : 'var(--navy-dark)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>{brokePct.toFixed(1)}%</span>
+                      {isExceeded && (
+                        <span
+                          style={{
+                            background: '#FEE2E2',
+                            color: '#DC2626',
+                            fontSize: '0.62rem',
+                            fontWeight: 800,
+                            padding: '1px 5px',
+                            borderRadius: '3px',
+                          }}
+                        >
+                          CEILING
+                        </span>
+                      )}
+                    </div>
+                    {s.id !== 'baseline' &&
+                      renderDelta(
+                        brokePct,
+                        baseBrokePct,
+                        '%',
                         true
                       )}
                   </td>

@@ -9,9 +9,12 @@ import {
   ArrowRight,
   Sliders,
   Filter,
+  TrendingUp,
+  AlertTriangle,
 } from 'lucide-react';
 import { CsvExportButton, type CsvExportOption } from '../common/CsvExportButton';
 import { buildCsvContent, downloadCsvFile } from '../../utils/csvExport';
+import { WasteWaterfallChart } from './WasteWaterfallChart';
 
 export const ProductionPlanningView: React.FC = () => {
   const {
@@ -28,11 +31,23 @@ export const ProductionPlanningView: React.FC = () => {
 
   const [filterMachine, setFilterMachine] = useState<'ALL' | 'PM1' | 'PM2'>('ALL');
 
-  const { netRequirements, machineLoading, totalProductionTonnageRequired, totalMachineHoursRequired } =
-    planningResult;
+  const {
+    netRequirements,
+    machineLoading,
+    totalProductionTonnageRequired,
+    totalGrossTonnageRequired,
+    totalLossTonnes,
+    totalMachineHoursRequired,
+    wasteSummary = [],
+  } = planningResult;
 
   const pm1 = machineLoading.PM1;
   const pm2 = machineLoading.PM2;
+
+  const yieldEfficiencyPct =
+    totalGrossTonnageRequired > 0
+      ? Math.round((totalProductionTonnageRequired / totalGrossTonnageRequired) * 1000) / 10
+      : 100;
 
   const filteredRequirements = netRequirements.filter((req) => {
     return filterMachine === 'ALL' || req.assigned_machine === filterMachine;
@@ -40,8 +55,8 @@ export const ProductionPlanningView: React.FC = () => {
 
   const exportPlanningOptions: CsvExportOption[] = [
     {
-      label: `Net Requirements by SKU (${filterMachine})`,
-      description: 'Gross demand, on-hand & allocated stock, target safety buffer, net tonnes & run hours',
+      label: `Gross & Net Production Requirements (${filterMachine})`,
+      description: 'Gross requirement, net demand, yield loss allowance, inventory cover, and machine hours',
       onExport: () => {
         const reqData = filteredRequirements.map((req) => ({
           sku_id: req.sku_id,
@@ -57,17 +72,28 @@ export const ProductionPlanningView: React.FC = () => {
           available_stock_tonnes: req.availableStockTonnes,
           safety_stock_target_tonnes: req.safetyStockTargetTonnes,
           net_production_requirement_tonnes: req.netProductionRequirementTonnes,
+          total_loss_tonnes: req.totalLossTonnes ?? 0,
+          gross_production_requirement_tonnes: req.grossProductionRequirementTonnes ?? req.netProductionRequirementTonnes,
           required_machine_hours: req.requiredMachineHours,
+          web_break_loss_tonnes: req.lossBreakdown?.webBreakTonnes ?? 0,
+          trim_loss_tonnes: req.lossBreakdown?.trimLossTonnes ?? 0,
+          quality_reject_tonnes: req.lossBreakdown?.qualityRejectTonnes ?? 0,
+          converting_loss_tonnes: req.lossBreakdown?.convertingLossTonnes ?? 0,
+          lot_rounding_tonnes: req.lossBreakdown?.lotRoundingSurplusTonnes ?? 0,
+          inventory_cover_weeks: req.inventoryCoverWeeks ?? 0,
+          is_slow_mover: req.isSlowMover ? 'YES (High Cover Alert)' : 'NO',
           status: req.status,
         }));
 
         const csv = buildCsvContent(
           {
-            datasetName: `Net Production Requirements (${forecastHorizon}M Horizon)`,
+            datasetName: `Gross & Net Production Requirements (${forecastHorizon}M Horizon)`,
             forecastHorizon: `${forecastHorizon} Months`,
             assumptions: {
               SafetyBufferDays: `${safetyBufferDays} days`,
               PM1UnplannedDowntime: `${pm1DowntimeHours} hours`,
+              YieldLossAllowance: `+${totalLossTonnes} tonnes`,
+              MillFirstPassYield: `${yieldEfficiencyPct}%`,
             },
             filtersApplied: { MachineFilter: filterMachine },
           },
@@ -79,19 +105,72 @@ export const ProductionPlanningView: React.FC = () => {
             { key: 'grammage_gsm', label: 'Grammage', unit: 'gsm' },
             { key: 'format_type', label: 'Format' },
             { key: 'assigned_machine', label: 'Machine' },
-            { key: 'forecast_demand_tonnes', label: 'Gross Demand', unit: 'tonnes' },
+            { key: 'forecast_demand_tonnes', label: 'Gross Forecast Demand', unit: 'tonnes' },
             { key: 'on_hand_stock_tonnes', label: 'On-Hand Stock', unit: 'tonnes' },
             { key: 'allocated_stock_tonnes', label: 'Allocated Stock', unit: 'tonnes' },
             { key: 'available_stock_tonnes', label: 'Available Stock', unit: 'tonnes' },
             { key: 'safety_stock_target_tonnes', label: 'Safety Target', unit: 'tonnes' },
-            { key: 'net_production_requirement_tonnes', label: 'Net Production Required', unit: 'tonnes' },
-            { key: 'required_machine_hours', label: 'Required Run Time', unit: 'hours' },
+            { key: 'net_production_requirement_tonnes', label: 'Net Demand Need', unit: 'tonnes' },
+            { key: 'total_loss_tonnes', label: 'Expected Yield Loss', unit: 'tonnes' },
+            { key: 'gross_production_requirement_tonnes', label: 'GROSS Production Req.', unit: 'tonnes' },
+            { key: 'required_machine_hours', label: 'Gross Machine Run Time', unit: 'hours' },
+            { key: 'web_break_loss_tonnes', label: 'Web-Break Broke', unit: 'tonnes' },
+            { key: 'trim_loss_tonnes', label: 'Slitter Trim Loss', unit: 'tonnes' },
+            { key: 'quality_reject_tonnes', label: 'Quality Rejects', unit: 'tonnes' },
+            { key: 'converting_loss_tonnes', label: 'Converting Loss', unit: 'tonnes' },
+            { key: 'lot_rounding_tonnes', label: 'Lot Rounding Surplus', unit: 'tonnes' },
+            { key: 'inventory_cover_weeks', label: 'Inventory Cover', unit: 'weeks' },
+            { key: 'is_slow_mover', label: 'Slow Mover Flag' },
             { key: 'status', label: 'Planning Status' },
           ],
           reqData
         );
 
-        downloadCsvFile('production_net_requirements', `machine_${filterMachine.toLowerCase()}`, csv);
+        downloadCsvFile('gross_and_net_production_requirements', `machine_${filterMachine.toLowerCase()}`, csv);
+      },
+    },
+    {
+      label: 'Waste & Yield Loss Summary by Component',
+      description: 'Itemized component waste tonnes, machine hours lost, and cost valuation',
+      onExport: () => {
+        const compData = wasteSummary.map((c) => ({
+          component_id: c.componentId,
+          component_name: c.componentName,
+          category: c.category,
+          is_sequence_dependent: c.isSequenceDependent ? 'Sequence-Dependent' : 'Non-Sequence',
+          is_enabled: c.isEnabled ? 'YES' : 'NO',
+          loss_tonnes: c.lossTonnes,
+          waste_pct_of_gross: c.wastePercentageOfGross,
+          machine_hours_lost: c.machineHoursLost,
+          estimated_cost_eur: c.estimatedCostEur,
+          client_input_tag: c.clientInputTag,
+        }));
+
+        const csv = buildCsvContent(
+          {
+            datasetName: 'Waste & Yield Loss Summary by Component',
+            forecastHorizon: `${forecastHorizon} Months`,
+            assumptions: {
+              TotalGrossTonnes: `${totalGrossTonnageRequired} tonnes`,
+              TotalLossTonnes: `${totalLossTonnes} tonnes`,
+            },
+          },
+          [
+            { key: 'component_id', label: 'Component ID' },
+            { key: 'component_name', label: 'Loss Component Name' },
+            { key: 'category', label: 'Category' },
+            { key: 'is_sequence_dependent', label: 'Sequence Nature' },
+            { key: 'is_enabled', label: 'Enabled in Model' },
+            { key: 'loss_tonnes', label: 'Yield Loss / Broke', unit: 'tonnes' },
+            { key: 'waste_pct_of_gross', label: 'Share of Gross', unit: '%' },
+            { key: 'machine_hours_lost', label: 'Machine Hours Lost', unit: 'hours' },
+            { key: 'estimated_cost_eur', label: 'Estimated Cost Impact', unit: 'EUR' },
+            { key: 'client_input_tag', label: 'Client Parameter Tag' },
+          ],
+          compData
+        );
+
+        downloadCsvFile('waste_loss_component_summary', 'all_components', csv);
       },
     },
     {
@@ -134,8 +213,8 @@ export const ProductionPlanningView: React.FC = () => {
             { key: 'planned_maintenance_hours', label: 'Planned Maintenance', unit: 'hours' },
             { key: 'scenario_downtime_hours', label: 'Unplanned Stop Downtime', unit: 'hours' },
             { key: 'net_available_hours', label: 'Net Available Hours', unit: 'hours' },
-            { key: 'required_run_hours', label: 'Required Production Run Time', unit: 'hours' },
-            { key: 'required_tonnes', label: 'Required Production Tonnage', unit: 'tonnes' },
+            { key: 'required_run_hours', label: 'Gross Production Run Time', unit: 'hours' },
+            { key: 'required_tonnes', label: 'Gross Production Tonnage', unit: 'tonnes' },
             { key: 'utilization_pct', label: 'Capacity Utilization', unit: '%' },
             { key: 'headroom_hours', label: 'Capacity Headroom (+) / Deficit (-)', unit: 'hours' },
             { key: 'is_bottleneck', label: 'Bottleneck Status' },
@@ -240,22 +319,39 @@ export const ProductionPlanningView: React.FC = () => {
         </div>
       </div>
 
-      {/* KPI Cards Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
+      {/* KPI Cards Row (6 Cards) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
         <MetricCard
-          label="Net Production Required"
-          value={`${totalProductionTonnageRequired.toLocaleString()} t`}
-          unit="Total Tonnage"
-          sublabel={`Across ${forecastHorizon} months after deducting inventory`}
+          label="Gross Production Required"
+          value={`${totalGrossTonnageRequired.toLocaleString()} t`}
+          unit="Loaded Mill Tonnage"
+          sublabel={`Includes +${totalLossTonnes.toLocaleString()} t yield & broke allowances`}
           icon={<Factory size={20} />}
           variant="highlight"
         />
 
         <MetricCard
-          label="Total Machine Hours Required"
+          label="Net Order Demand"
+          value={`${totalProductionTonnageRequired.toLocaleString()} t`}
+          unit="Finished Saleable Product"
+          sublabel={`Across ${forecastHorizon} months after deducting inventory`}
+          icon={<Sliders size={20} />}
+        />
+
+        <MetricCard
+          label="Mill First-Pass Yield"
+          value={`${yieldEfficiencyPct}%`}
+          unit={`-${totalLossTonnes.toLocaleString()} t lost`}
+          sublabel="Net demand as percentage of gross production requirement"
+          variant={yieldEfficiencyPct >= 95 ? 'success' : 'warning'}
+          icon={<TrendingUp size={20} />}
+        />
+
+        <MetricCard
+          label="Gross Machine Hours Required"
           value={`${totalMachineHoursRequired.toLocaleString()} h`}
-          unit="Mill Operating Hours"
-          sublabel="Net of changeover buffers and run setups"
+          unit="Total Mill Run Time"
+          sublabel="Recalculated on gross tonnage loaded onto machines"
           icon={<CalendarDays size={20} />}
         />
 
@@ -455,7 +551,10 @@ export const ProductionPlanningView: React.FC = () => {
         </div>
       </div>
 
-      {/* Net Requirements MRP Calculation Table */}
+      {/* Yield Loss & Waste Waterfall Section */}
+      <WasteWaterfallChart />
+
+      {/* Detailed Gross & Net Requirements MRP Calculation Table */}
       <div
         style={{
           background: '#FFFFFF',
@@ -467,11 +566,26 @@ export const ProductionPlanningView: React.FC = () => {
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <h3 style={{ fontSize: '1.05rem', color: 'var(--navy-dark)', fontWeight: 700, margin: 0 }}>
-              Detailed Net Production Requirements Matrix
-            </h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h3 style={{ fontSize: '1.05rem', color: 'var(--navy-dark)', fontWeight: 700, margin: 0 }}>
+                Detailed SKU Production Requirements Matrix (Net vs. Gross)
+              </h3>
+              <span
+                style={{
+                  fontSize: '0.68rem',
+                  fontWeight: 600,
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  background: 'var(--off-white-bg)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-light)',
+                }}
+              >
+                Gross loaded on machines
+              </span>
+            </div>
             <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Inventory deduction, safety stock buffer adjustment, and required machine run time
+              Shows net demand need alongside required yield loss broke allowances and machine run hours
             </p>
           </div>
 
@@ -520,92 +634,146 @@ export const ProductionPlanningView: React.FC = () => {
         </div>
 
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ fontSize: '0.78rem', textAlign: 'left' }}>
+          <table style={{ fontSize: '0.76rem', textAlign: 'left', width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--off-white-bg)', borderBottom: '2px solid var(--border-light)' }}>
-                <th style={{ padding: '8px 10px' }}>SKU</th>
-                <th style={{ padding: '8px 10px' }}>Product Line</th>
-                <th style={{ padding: '8px 10px' }}>Shade</th>
-                <th style={{ padding: '8px 10px' }}>Grammage</th>
-                <th style={{ padding: '8px 10px' }}>Format</th>
-                <th style={{ padding: '8px 10px' }}>Machine</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right' }}>Gross Demand</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right' }}>Avail. Stock</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right' }}>Safety Target</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--brand-blue)' }}>Net Production</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right' }}>Run Hours</th>
-                <th style={{ padding: '8px 10px', textAlign: 'center' }}>Plan Status</th>
+                <th style={{ padding: '8px 8px' }}>SKU</th>
+                <th style={{ padding: '8px 8px' }}>Product Line</th>
+                <th style={{ padding: '8px 8px' }}>Shade</th>
+                <th style={{ padding: '8px 8px' }}>Grammage</th>
+                <th style={{ padding: '8px 8px' }}>Format</th>
+                <th style={{ padding: '8px 8px' }}>Machine</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right' }}>Gross Demand</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right' }}>Avail. Stock</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right' }}>Safety Target</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right', color: 'var(--brand-blue)' }}>Net Need</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right', color: '#D97706' }}>Loss (+t)</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 800, color: 'var(--navy-dark)', background: 'rgba(0, 102, 153, 0.05)' }}>
+                  GROSS Req.
+                </th>
+                <th style={{ padding: '8px 8px', textAlign: 'right' }}>Machine Time</th>
+                <th style={{ padding: '8px 8px', textAlign: 'right' }}>Yield %</th>
+                <th style={{ padding: '8px 8px', textAlign: 'center' }}>Plan Status</th>
               </tr>
             </thead>
             <tbody>
-              {filteredRequirements.map((req) => (
-                <tr
-                  key={req.sku_id}
-                  style={{
-                    borderBottom: '1px solid var(--border-light)',
-                    transition: 'background 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = '#F8FAFC')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontWeight: 600 }}>{req.sku_id}</td>
-                  <td style={{ padding: '8px 10px' }}>{req.brand_line}</td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <ShadeSwatch hex={req.shade_hex} name={req.shade_name} showLabel />
-                  </td>
-                  <td style={{ padding: '8px 10px' }}>{req.grammage_gsm}g</td>
-                  <td style={{ padding: '8px 10px' }}>{req.format_type}</td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <span
+              {filteredRequirements.map((req) => {
+                const skuYieldPct =
+                  (req.grossProductionRequirementTonnes ?? req.netProductionRequirementTonnes) > 0
+                    ? Math.round(
+                        (req.netProductionRequirementTonnes /
+                          (req.grossProductionRequirementTonnes ?? req.netProductionRequirementTonnes)) *
+                          1000
+                      ) / 10
+                    : 100;
+
+                return (
+                  <tr
+                    key={req.sku_id}
+                    style={{
+                      borderBottom: '1px solid var(--border-light)',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#F8FAFC')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <td style={{ padding: '8px 8px', fontFamily: 'monospace', fontWeight: 600 }}>{req.sku_id}</td>
+                    <td style={{ padding: '8px 8px' }}>{req.brand_line}</td>
+                    <td style={{ padding: '8px 8px' }}>
+                      <ShadeSwatch hex={req.shade_hex} name={req.shade_name} showLabel />
+                    </td>
+                    <td style={{ padding: '8px 8px' }}>{req.grammage_gsm}g</td>
+                    <td style={{ padding: '8px 8px' }}>{req.format_type}</td>
+                    <td style={{ padding: '8px 8px' }}>
+                      <span
+                        style={{
+                          padding: '1px 5px',
+                          borderRadius: '3px',
+                          fontSize: '0.68rem',
+                          fontWeight: 700,
+                          background: req.assigned_machine === 'PM1' ? 'var(--brand-blue-light)' : 'rgba(13, 187, 223, 0.15)',
+                          color: req.assigned_machine === 'PM1' ? 'var(--brand-blue)' : '#007A94',
+                        }}
+                      >
+                        {req.assigned_machine}
+                      </span>
+                    </td>
+                    <td style={{ padding: '8px 8px', textAlign: 'right' }}>{req.forecastDemandTonnes} t</td>
+                    <td style={{ padding: '8px 8px', textAlign: 'right' }}>{req.availableStockTonnes} t</td>
+                    <td style={{ padding: '8px 8px', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                      {req.safetyStockTargetTonnes} t
+                    </td>
+                    <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--brand-blue)' }}>
+                      {req.netProductionRequirementTonnes} t
+                    </td>
+                    <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, color: '#D97706' }}>
+                      +{req.totalLossTonnes ?? 0} t
+                    </td>
+                    <td
                       style={{
-                        padding: '1px 5px',
-                        borderRadius: '3px',
-                        fontSize: '0.68rem',
-                        fontWeight: 700,
-                        background: req.assigned_machine === 'PM1' ? 'var(--brand-blue-light)' : 'rgba(13, 187, 223, 0.15)',
-                        color: req.assigned_machine === 'PM1' ? 'var(--brand-blue)' : '#007A94',
+                        padding: '8px 8px',
+                        textAlign: 'right',
+                        fontWeight: 800,
+                        color: 'var(--navy-dark)',
+                        background: 'rgba(0, 102, 153, 0.05)',
                       }}
                     >
-                      {req.assigned_machine}
-                    </span>
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{req.forecastDemandTonnes} t</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right' }}>{req.availableStockTonnes} t</td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                    {req.safetyStockTargetTonnes} t
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: 'var(--navy-dark)' }}>
-                    {req.netProductionRequirementTonnes} t
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>
-                    {req.requiredMachineHours} h
-                  </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                    <span
-                      style={{
-                        padding: '2px 6px',
-                        borderRadius: '4px',
-                        fontSize: '0.68rem',
-                        fontWeight: 600,
-                        background:
-                          req.status === 'Production Needed'
-                            ? 'var(--brand-blue-light)'
-                            : req.status === 'Surplus'
-                            ? 'var(--success-bg)'
-                            : 'var(--off-white-bg)',
-                        color:
-                          req.status === 'Production Needed'
-                            ? 'var(--brand-blue)'
-                            : req.status === 'Surplus'
-                            ? 'var(--success-green)'
-                            : 'var(--text-secondary)',
-                      }}
-                    >
-                      {req.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+                      {(req.grossProductionRequirementTonnes ?? req.netProductionRequirementTonnes).toLocaleString()} t
+                    </td>
+                    <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600 }}>
+                      {req.requiredMachineHours} h
+                    </td>
+                    <td style={{ padding: '8px 8px', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                      {skuYieldPct}%
+                    </td>
+                    <td style={{ padding: '8px 8px', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                        <span
+                          style={{
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontSize: '0.66rem',
+                            fontWeight: 600,
+                            background:
+                              req.status === 'Production Needed'
+                                ? 'var(--brand-blue-light)'
+                                : req.status === 'Surplus'
+                                ? 'var(--success-bg)'
+                                : 'var(--off-white-bg)',
+                            color:
+                              req.status === 'Production Needed'
+                                ? 'var(--brand-blue)'
+                                : req.status === 'Surplus'
+                                ? 'var(--success-green)'
+                                : 'var(--text-secondary)',
+                          }}
+                        >
+                          {req.status}
+                        </span>
+                        {req.isSlowMover && (
+                          <span
+                            style={{
+                              padding: '1px 4px',
+                              borderRadius: '3px',
+                              fontSize: '0.62rem',
+                              fontWeight: 700,
+                              background: 'rgba(217, 119, 6, 0.15)',
+                              color: 'var(--warning-amber)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '2px',
+                            }}
+                            title={`Cover is ${req.inventoryCoverWeeks} weeks (threshold exceeded)`}
+                          >
+                            <AlertTriangle size={10} />
+                            Slow: {req.inventoryCoverWeeks}w
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

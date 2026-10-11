@@ -5,24 +5,28 @@ import type {
   OptimizationComparison,
   MachineId,
 } from '../types';
+import type { LossModelConfig } from '../types/lossModel';
 import { calculateChangeover } from './changeoverCalculator';
 import { generateRunExplainability } from './explainability';
 
 function computeMetrics(
   runs: ScheduledRun[],
   hourlyRateEur: number = 480,
-  brokeCostPerTonneEur: number = 280
+  brokeCostPerTonneEur: number = 280,
+  config?: LossModelConfig
 ): ScheduleMetrics {
   let totalProductionHours = 0;
   let totalChangeoverHours = 0;
   let totalBrokeTonnes = 0;
   let washoutCount = 0;
   let slaMetCount = 0;
+  let totalWashoutWaterM3 = 0;
 
   runs.forEach((r) => {
     totalProductionHours += r.production_hours;
     totalChangeoverHours += r.changeoverHours;
     totalBrokeTonnes += r.brokeTonnes;
+    totalWashoutWaterM3 += r.changeoverBreakdown.washoutWaterM3 ?? 0;
     if (r.isWashout) washoutCount += 1;
     if (r.meetsSla) slaMetCount += 1;
   });
@@ -35,6 +39,15 @@ function computeMetrics(
   const slaCompliancePct =
     runs.length > 0 ? Math.round((slaMetCount / runs.length) * 1000) / 10 : 100;
 
+  // Component 11: Broke recycling furnish ceiling
+  const totalCampaignTonnes = runs.reduce((sum, r) => sum + r.quantity_tonnes, 0);
+  const totalFurnishTonnes = totalCampaignTonnes + totalBrokeTonnes;
+  const brokeFurnishPct = totalFurnishTonnes > 0
+    ? Math.round((totalBrokeTonnes / totalFurnishTonnes) * 1000) / 10
+    : 0;
+  const maxCeiling = config?.maxFurnishRecycleCeilingPct ?? 15.0;
+  const brokeRecycleExceeded = (config?.enableBrokeRecycling ?? false) && brokeFurnishPct > maxCeiling;
+
   return {
     totalRuns: runs.length,
     totalProductionHours: Math.round(totalProductionHours * 10) / 10,
@@ -45,6 +58,10 @@ function computeMetrics(
     totalBrokeCostEur,
     slaCompliancePct,
     totalSpanHours: Math.round(totalSpanHours * 10) / 10,
+    sequenceDependentLossTonnes: Math.round(totalBrokeTonnes * 10) / 10,
+    totalWashoutWaterM3: Math.round(totalWashoutWaterM3 * 10) / 10,
+    brokeFurnishPct,
+    brokeRecycleExceeded,
   };
 }
 
@@ -52,7 +69,8 @@ function scheduleRunList(
   orderedRuns: CampaignOrder[],
   isOptimized: boolean,
   washoutMultiplier: number = 1.0,
-  brokeRateTph: number = 2.4
+  brokeRateTph: number = 2.4,
+  config?: LossModelConfig
 ): ScheduledRun[] {
   const result: ScheduledRun[] = [];
   let currentHour = 0;
@@ -61,7 +79,7 @@ function scheduleRunList(
     const run = orderedRuns[i];
     const prevRun = i > 0 ? orderedRuns[i - 1] : null;
 
-    const changeover = calculateChangeover(prevRun, run, washoutMultiplier, brokeRateTph);
+    const changeover = calculateChangeover(prevRun, run, washoutMultiplier, brokeRateTph, config);
     const startHour = Math.round((currentHour + changeover.totalHours) * 10) / 10;
     const endHour = Math.round((startHour + run.production_hours) * 10) / 10;
     currentHour = endHour;
@@ -99,7 +117,8 @@ export function optimizeSequence(
   campaignOrders: CampaignOrder[],
   targetMachine: MachineId = 'PM1',
   washoutMultiplier: number = 1.0,
-  brokeRateTph: number = 2.4
+  brokeRateTph: number = 2.4,
+  config?: LossModelConfig
 ): OptimizationComparison {
   // Filter for the machine being scheduled (PM1 default for primary graphic demonstration)
   const machineOrders = campaignOrders.filter((o) => o.assigned_machine === targetMachine);
@@ -107,8 +126,8 @@ export function optimizeSequence(
   // 1. Build Naive Sequence (Order Book Arrival sequence)
   // Preserves original arriving order which has costly back-and-forth shade changes
   const naiveList = [...machineOrders];
-  const naiveScheduled = scheduleRunList(naiveList, false, washoutMultiplier, brokeRateTph);
-  const naiveMetrics = computeMetrics(naiveScheduled);
+  const naiveScheduled = scheduleRunList(naiveList, false, washoutMultiplier, brokeRateTph, config);
+  const naiveMetrics = computeMetrics(naiveScheduled, 480, 280, config);
 
   // 2. Build Optimized Sequence (Heuristic Light-to-Dark Ladder + Grammage Sort + Format Grouping + SLA Protection)
   const sortedOptimizedList = [...machineOrders].sort((a, b) => {
@@ -147,9 +166,10 @@ export function optimizeSequence(
     sortedOptimizedList,
     true,
     washoutMultiplier,
-    brokeRateTph
+    brokeRateTph,
+    config
   );
-  const optimizedMetrics = computeMetrics(optimizedScheduled);
+  const optimizedMetrics = computeMetrics(optimizedScheduled, 480, 280, config);
 
   // Compute live savings
   const changeoverHoursSaved = Math.round(
@@ -160,6 +180,10 @@ export function optimizeSequence(
   ) / 10;
   const capacityReleasedHours = changeoverHoursSaved;
   const washoutsAvoided = Math.max(0, naiveMetrics.washoutCount - optimizedMetrics.washoutCount);
+  const waterSavedM3 = Math.max(
+    0,
+    Math.round(((naiveMetrics.totalWashoutWaterM3 ?? 0) - (optimizedMetrics.totalWashoutWaterM3 ?? 0)) * 10) / 10
+  );
   const financialSavingsEur = Math.round(
     changeoverHoursSaved * 480 + brokeTonnesSaved * 280
   );
@@ -179,6 +203,7 @@ export function optimizeSequence(
       capacityReleasedHours,
       financialSavingsEur,
       washoutsAvoided,
+      waterSavedM3,
     },
   };
 }

@@ -29,6 +29,8 @@ import upcomingOrdersRaw from '../data/upcoming_order_book.json';
 import { computeForecast, type ForecastCalculationResult } from '../engine/forecastEngine';
 import { computeNetRequirements, type PlanningCalculationResult } from '../engine/planningEngine';
 import { optimizeSequence } from '../engine/sequenceOptimizer';
+import type { LossModelConfig } from '../types/lossModel';
+import { DEFAULT_LOSS_MODEL_CONFIG } from '../types/lossModel';
 
 export type TabId =
   | 'executive'
@@ -91,6 +93,12 @@ interface PlanningContextValue {
   setWashoutMultiplier: (m: number) => void;
   resetAssumptions: () => void;
 
+  // Waste & Yield Loss Model Config
+  lossModelConfig: LossModelConfig;
+  setLossModelConfig: (config: LossModelConfig) => void;
+  updateLossModelConfig: (updates: Partial<LossModelConfig>) => void;
+  resetLossModelConfig: () => void;
+
   // Computed results
   forecastResult: ForecastCalculationResult;
   planningResult: PlanningCalculationResult;
@@ -141,6 +149,35 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       // ignore
     }
   }, [scenarios]);
+
+  // Waste & Yield Loss Model State
+  const [lossModelConfig, setLossModelConfig] = useState<LossModelConfig>(() => {
+    try {
+      const stored = localStorage.getItem('lessebo_loss_model_config_v1');
+      if (stored) {
+        return { ...DEFAULT_LOSS_MODEL_CONFIG, ...JSON.parse(stored) };
+      }
+    } catch {
+      // ignore
+    }
+    return DEFAULT_LOSS_MODEL_CONFIG;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('lessebo_loss_model_config_v1', JSON.stringify(lossModelConfig));
+    } catch {
+      // ignore
+    }
+  }, [lossModelConfig]);
+
+  const updateLossModelConfig = (updates: Partial<LossModelConfig>) => {
+    setLossModelConfig((prev) => ({ ...prev, ...updates }));
+  };
+
+  const resetLossModelConfig = () => {
+    setLossModelConfig(DEFAULT_LOSS_MODEL_CONFIG);
+  };
 
   // Current active scenario object
   const activeScenario = useMemo(() => {
@@ -335,9 +372,11 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       totalHorizonTonnes,
       activeScenarioParams.safetyBufferDays,
       activeScenarioParams.pm1DowntimeHours,
-      activeScenarioParams.pm2DowntimeHours
+      activeScenarioParams.pm2DowntimeHours,
+      lossModelConfig,
+      forecastHorizon
     );
-  }, [products, inventory, machineCapacity, forecastResult, activeScenarioParams]);
+  }, [products, inventory, machineCapacity, forecastResult, activeScenarioParams, lossModelConfig, forecastHorizon]);
 
   // Live Memoized Sequence Optimization synced with active scenario parameters
   const optimizationResult = useMemo(() => {
@@ -345,9 +384,10 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       upcomingOrders,
       selectedMachine,
       activeScenarioParams.washoutMultiplier,
-      activeScenarioParams.brokeRateTph
+      activeScenarioParams.brokeRateTph,
+      lossModelConfig
     );
-  }, [upcomingOrders, selectedMachine, activeScenarioParams]);
+  }, [upcomingOrders, selectedMachine, activeScenarioParams, lossModelConfig]);
 
   return (
     <PlanningContext.Provider
@@ -394,6 +434,12 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         washoutMultiplier,
         setWashoutMultiplier,
         resetAssumptions,
+
+        // Waste & Yield Loss Model Config
+        lossModelConfig,
+        setLossModelConfig,
+        updateLossModelConfig,
+        resetLossModelConfig,
 
         // Synchronized Results
         forecastResult,

@@ -10,14 +10,21 @@ import {
   TrendingUp,
   Eye,
   Grid,
+  Droplets,
+  Layers,
 } from 'lucide-react';
 import { CsvExportButton, type CsvExportOption } from '../common/CsvExportButton';
 import { buildCsvContent, downloadCsvFile } from '../../utils/csvExport';
 import type { ScheduledRun } from '../../types';
 
 export const SequenceOptimizationView: React.FC = () => {
-  const { optimizationResult, selectedRunId, setSelectedRunId, selectedMachine } =
-    usePlanning();
+  const {
+    optimizationResult,
+    selectedRunId,
+    setSelectedRunId,
+    selectedMachine,
+    lossModelConfig,
+  } = usePlanning();
 
   const [viewMode, setViewMode] = useState<'sideBySide' | 'optimized' | 'naive'>('sideBySide');
   const [showTransitionMatrix, setShowTransitionMatrix] = useState<boolean>(false);
@@ -71,6 +78,11 @@ export const SequenceOptimizationView: React.FC = () => {
           grammage_hours: r.changeoverBreakdown.grammageHours,
           format_hours: r.changeoverBreakdown.formatHours,
           is_washout: r.isWashout ? 'YES' : 'NO',
+          color_broke_tonnes: r.changeoverBreakdown.colorBrokeTonnes ?? 0,
+          grammage_broke_tonnes: r.changeoverBreakdown.grammageBrokeTonnes ?? 0,
+          format_broke_tonnes: r.changeoverBreakdown.formatBrokeTonnes ?? 0,
+          startup_broke_tonnes: r.changeoverBreakdown.startupBrokeTonnes ?? 0,
+          washout_water_m3: r.changeoverBreakdown.washoutWaterM3 ?? 0,
           broke_tonnes: r.brokeTonnes,
           due_in_days: r.due_in_days,
           meets_sla: r.meetsSla ? 'YES' : 'NO (At Risk)',
@@ -108,7 +120,12 @@ export const SequenceOptimizationView: React.FC = () => {
             { key: 'grammage_hours', label: 'Grammage Step', unit: 'hours' },
             { key: 'format_hours', label: 'Format Switch', unit: 'hours' },
             { key: 'is_washout', label: 'Deep Washout Required' },
-            { key: 'broke_tonnes', label: 'Transition Broke Scrap', unit: 'tonnes' },
+            { key: 'color_broke_tonnes', label: 'Color Transition Broke', unit: 'tonnes' },
+            { key: 'grammage_broke_tonnes', label: 'Grammage Delta Broke', unit: 'tonnes' },
+            { key: 'format_broke_tonnes', label: 'Format Switch Broke', unit: 'tonnes' },
+            { key: 'startup_broke_tonnes', label: 'Start-up Calibration Broke', unit: 'tonnes' },
+            { key: 'washout_water_m3', label: 'Washout Effluent Water', unit: 'm3' },
+            { key: 'broke_tonnes', label: 'Total Transition Broke', unit: 'tonnes' },
             { key: 'due_in_days', label: 'Customer Due Deadline', unit: 'days' },
             { key: 'meets_sla', label: 'SLA Delivery Compliance' },
             { key: 'changeover_reason', label: 'Engineering Changeover Reason' },
@@ -140,6 +157,11 @@ export const SequenceOptimizationView: React.FC = () => {
           end_hour: r.endHour,
           changeover_hours: r.changeoverHours,
           is_washout: r.isWashout ? 'YES' : 'NO',
+          color_broke_tonnes: r.changeoverBreakdown.colorBrokeTonnes ?? 0,
+          grammage_broke_tonnes: r.changeoverBreakdown.grammageBrokeTonnes ?? 0,
+          format_broke_tonnes: r.changeoverBreakdown.formatBrokeTonnes ?? 0,
+          startup_broke_tonnes: r.changeoverBreakdown.startupBrokeTonnes ?? 0,
+          washout_water_m3: r.changeoverBreakdown.washoutWaterM3 ?? 0,
           broke_tonnes: r.brokeTonnes,
           due_in_days: r.due_in_days,
           meets_sla: r.meetsSla ? 'YES' : 'NO (At Risk)',
@@ -167,6 +189,11 @@ export const SequenceOptimizationView: React.FC = () => {
             { key: 'end_hour', label: 'End Hour', unit: 'hours' },
             { key: 'changeover_hours', label: 'Total Changeover', unit: 'hours' },
             { key: 'is_washout', label: 'Deep Washout Required' },
+            { key: 'color_broke_tonnes', label: 'Color Transition Broke', unit: 'tonnes' },
+            { key: 'grammage_broke_tonnes', label: 'Grammage Delta Broke', unit: 'tonnes' },
+            { key: 'format_broke_tonnes', label: 'Format Switch Broke', unit: 'tonnes' },
+            { key: 'startup_broke_tonnes', label: 'Start-up Calibration Broke', unit: 'tonnes' },
+            { key: 'washout_water_m3', label: 'Washout Effluent Water', unit: 'm3' },
             { key: 'broke_tonnes', label: 'Transition Broke Scrap', unit: 'tonnes' },
             { key: 'due_in_days', label: 'Customer Due Deadline', unit: 'days' },
             { key: 'meets_sla', label: 'SLA Delivery Compliance' },
@@ -230,6 +257,22 @@ export const SequenceOptimizationView: React.FC = () => {
             delta_savings: Math.round((optimized.metrics.slaCompliancePct - naive.metrics.slaCompliancePct) * 10) / 10,
             unit: '%',
             improvement_pct: Math.round((optimized.metrics.slaCompliancePct - naive.metrics.slaCompliancePct) * 10) / 10,
+          },
+          {
+            metric: 'Washout Cleaning Effluent Water',
+            naive_value: naive.metrics.totalWashoutWaterM3 ?? 0,
+            optimized_value: optimized.metrics.totalWashoutWaterM3 ?? 0,
+            delta_savings: savings.waterSavedM3 ?? 0,
+            unit: 'm3',
+            improvement_pct: Math.round(((savings.waterSavedM3 ?? 0) / ((naive.metrics.totalWashoutWaterM3 ?? 0) || 1)) * 1000) / 10,
+          },
+          {
+            metric: 'Broke Furnish Recycling Ratio',
+            naive_value: naive.metrics.brokeFurnishPct ?? 0,
+            optimized_value: optimized.metrics.brokeFurnishPct ?? 0,
+            delta_savings: Math.round(((naive.metrics.brokeFurnishPct ?? 0) - (optimized.metrics.brokeFurnishPct ?? 0)) * 10) / 10,
+            unit: '%',
+            improvement_pct: Math.round(((naive.metrics.brokeFurnishPct ?? 0) - (optimized.metrics.brokeFurnishPct ?? 0)) * 10) / 10,
           },
         ];
 
@@ -321,6 +364,36 @@ export const SequenceOptimizationView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Broke Furnish Recycling Ceiling Warning Banner (Component 11) */}
+      {lossModelConfig.enableBrokeRecycling &&
+        (optimized.metrics.brokeRecycleExceeded ||
+          (optimized.metrics.brokeFurnishPct ?? 0) > (lossModelConfig.maxFurnishRecycleCeilingPct ?? 15)) && (
+          <div
+            style={{
+              background: '#FFFBEB',
+              border: '2px solid var(--warning-amber)',
+              borderRadius: 'var(--radius-md)',
+              padding: '16px 20px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '14px',
+            }}
+          >
+            <AlertTriangle size={22} color="var(--warning-amber)" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                <strong style={{ fontSize: '0.92rem', color: '#92400E' }}>
+                  Furnish Broke Recycling Ceiling Warning (Component 11)
+                </strong>
+                <ClientInputBadge parameterName="Furnish Broke Ceiling" />
+              </div>
+              <p style={{ fontSize: '0.82rem', color: '#B45309', margin: 0, lineHeight: 1.5 }}>
+                Campaign broke generation represents <strong>{(optimized.metrics.brokeFurnishPct ?? 0).toFixed(1)}%</strong> of total furnish, exceeding the maximum safe repulping ceiling of <strong>{lossModelConfig.maxFurnishRecycleCeilingPct ?? 15}%</strong>. In order to avoid sheet strength and formation degradation, excess broke fiber must either be stored for future blends or downcycled, incurring additional broke recovery costs.
+              </p>
+            </div>
+          </div>
+        )}
 
       {/* Comparison Scorecard Table (Prompt Specified Mechanism) */}
       <div
@@ -426,6 +499,48 @@ export const SequenceOptimizationView: React.FC = () => {
                 </td>
               </tr>
 
+              <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+                <td style={{ padding: '12px 16px', fontWeight: 600 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Droplets size={16} color="var(--cyan-accent)" />
+                    <span>Washout Effluent Water Loss</span>
+                  </div>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                    High-pressure chest wash volume (6 m³/washout)
+                  </span>
+                </td>
+                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--danger-crimson)' }}>
+                  {naive.metrics.totalWashoutWaterM3 ?? 0} m³
+                </td>
+                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand-blue)' }}>
+                  {optimized.metrics.totalWashoutWaterM3 ?? 0} m³
+                </td>
+                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
+                  -{savings.waterSavedM3 ?? 0} m³ effluent avoided
+                </td>
+              </tr>
+
+              <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
+                <td style={{ padding: '12px 16px', fontWeight: 600 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Layers size={16} color="var(--brand-blue)" />
+                    <span>Broke Furnish Recycling Ratio</span>
+                  </div>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                    Broke as % of gross furnish (Max ceiling: {lossModelConfig.maxFurnishRecycleCeilingPct ?? 15}%)
+                  </span>
+                </td>
+                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--danger-crimson)' }}>
+                  {(naive.metrics.brokeFurnishPct ?? 0).toFixed(1)}%
+                </td>
+                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand-blue)' }}>
+                  {(optimized.metrics.brokeFurnishPct ?? 0).toFixed(1)}%
+                </td>
+                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
+                  {((naive.metrics.brokeFurnishPct ?? 0) - (optimized.metrics.brokeFurnishPct ?? 0)).toFixed(1)}% lower fiber stress
+                </td>
+              </tr>
+
               <tr style={{ borderBottom: '1px solid var(--border-light)', background: '#F8FCFD' }}>
                 <td style={{ padding: '12px 16px', fontWeight: 700 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -465,6 +580,109 @@ export const SequenceOptimizationView: React.FC = () => {
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Sequence vs Non-Sequence Loss Architecture Card */}
+      <div
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 'var(--radius-lg)',
+          padding: '24px 28px',
+          border: '1px solid var(--border-light)',
+          boxShadow: 'var(--shadow-sm)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <h3 style={{ fontSize: '1.15rem', color: 'var(--navy-dark)', fontWeight: 700, margin: 0 }}>
+              Loss Classification Architecture: Sequence-Dependent vs. Non-Sequence Yield Losses
+            </h3>
+            <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+              Understanding what production scheduling can optimize versus baseline manufacturing process losses
+            </p>
+          </div>
+          <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            Illustrative / Synthetic - Not actual Lessebo results
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+          {/* Card 1: Sequence-Dependent Losses */}
+          <div
+            style={{
+              background: '#F0F9FF',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid #BAE6FD',
+              padding: '18px 20px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Sparkles size={18} color="var(--brand-blue)" />
+              <strong style={{ fontSize: '0.95rem', color: 'var(--navy-dark)' }}>
+                Sequence-Dependent Losses (Optimizable)
+              </strong>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
+              Directly driven by run order and transition physics. Solved deterministically by the Light-to-Dark ladder.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.78rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
+                <span>• Shade Washout Broke & Off-Spec Transitions:</span>
+                <strong style={{ color: 'var(--brand-blue)' }}>{savings.brokeTonnesSaved.toFixed(1)} t saved</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
+                <span>• Washout Chest Effluent Cleaning Water:</span>
+                <strong style={{ color: 'var(--brand-blue)' }}>{(savings.waterSavedM3 ?? 0).toFixed(0)} m³ saved</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
+                <span>• Caliper / Grammage Jump Stabilization:</span>
+                <strong style={{ color: 'var(--brand-blue)' }}>Continuous gradient</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>• Slitter & Rewinder Deckle Width Switches:</span>
+                <strong style={{ color: 'var(--brand-blue)' }}>Grouped by format</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Non-Sequence Yield Losses */}
+          <div
+            style={{
+              background: '#FAF5FF',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid #E9D5FF',
+              padding: '18px 20px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Layers size={18} color="#7C3AED" />
+              <strong style={{ fontSize: '0.95rem', color: 'var(--navy-dark)' }}>
+                Non-Sequence Yield Losses (Process Baselines)
+              </strong>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
+              Inherent to machine geometry, paper grade, and finishing equipment. Fed into MRP gross requirement calculation.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.78rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
+                <span>• Deckle Edge Trim Loss (Format Geometry):</span>
+                <strong style={{ color: '#7C3AED' }}>2.0% – 4.5% (Configurable)</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
+                <span>• Web-Break Broke (Paper Tension by GSM):</span>
+                <strong style={{ color: '#7C3AED' }}>1.5% – 3.2% (Configurable)</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
+                <span>• Fixed Startup Calibration Broke:</span>
+                <strong style={{ color: '#7C3AED' }}>0.5 t / production run</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>• Converting & Finishing Scrap (Sheeting/Slit):</span>
+                <strong style={{ color: '#7C3AED' }}>{lossModelConfig.enableConvertingLoss ? 'Active' : 'Off (Default)'}</strong>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -982,6 +1200,62 @@ export const SequenceOptimizationView: React.FC = () => {
                 <li key={i}>{r}</li>
               ))}
             </ul>
+          </div>
+
+          {/* Transition Broke & Water Inspector */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Droplets size={16} color="var(--brand-blue)" />
+              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--navy-dark)' }}>
+                Transition Broke & Effluent Water:
+              </span>
+            </div>
+
+            <div
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '6px',
+                border: '1px solid var(--border-light)',
+                padding: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                fontSize: '0.75rem',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Color Washout Broke:</span>
+                <strong style={{ color: (activeSelectedRun.changeoverBreakdown.colorBrokeTonnes ?? 0) > 0 ? 'var(--warning-amber)' : 'var(--text-primary)' }}>
+                  {(activeSelectedRun.changeoverBreakdown.colorBrokeTonnes ?? 0).toFixed(2)} t
+                </strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Grammage Delta Broke:</span>
+                <strong>{(activeSelectedRun.changeoverBreakdown.grammageBrokeTonnes ?? 0).toFixed(2)} t</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Format Switch Broke:</span>
+                <strong>{(activeSelectedRun.changeoverBreakdown.formatBrokeTonnes ?? 0).toFixed(2)} t</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Start-up Calibration Broke:</span>
+                <strong>{(activeSelectedRun.changeoverBreakdown.startupBrokeTonnes ?? 0).toFixed(2)} t</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: '4px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Washout Effluent Water:</span>
+                <strong style={{ color: 'var(--cyan-accent)' }}>
+                  {(activeSelectedRun.changeoverBreakdown.washoutWaterM3 ?? 0).toFixed(1)} m³
+                </strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '2px', fontWeight: 700 }}>
+                <span>Total Run Transition Broke:</span>
+                <span style={{ color: 'var(--brand-blue)' }}>{activeSelectedRun.brokeTonnes.toFixed(2)} t</span>
+              </div>
+            </div>
+
+            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '8px', fontStyle: 'italic' }}>
+              Base: {activeSelectedRun.changeoverBreakdown.baseSetup}h • Washout: {activeSelectedRun.changeoverBreakdown.washoutHours}h • GSM: {activeSelectedRun.changeoverBreakdown.grammageHours}h • Format: {activeSelectedRun.changeoverBreakdown.formatHours}h
+            </div>
           </div>
         </div>
       </div>
