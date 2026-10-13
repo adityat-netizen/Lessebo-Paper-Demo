@@ -145,6 +145,11 @@ export interface ChangeoverBreakdown {
   formatHours: number;
   totalHours: number;
   isWashout: boolean;
+  isGrammageReversal?: boolean;
+  grammageDirection?: 'up' | 'down' | 'same';
+  grammageDeltaGsm?: number;
+  grammageUpHours?: number;
+  grammageDownHours?: number;
   brokeTonnes: number;
   colorBrokeTonnes?: number;
   grammageBrokeTonnes?: number;
@@ -187,6 +192,79 @@ export interface ScheduleMetrics {
   totalWashoutWaterM3?: number;
   brokeRecycleExceeded?: boolean;
   brokeFurnishPct?: number;
+  grammageReversalsCount?: number;
+  strategyId?: string;
+  strategyName?: string;
+}
+
+export type SequencingStrategyId = 'naive' | 'color_first' | 'grammage_first' | 'hybrid';
+
+export interface StrategyResult {
+  id: SequencingStrategyId;
+  name: string;
+  description: string;
+  runs: ScheduledRun[];
+  metrics: ScheduleMetrics;
+  isRecommended?: boolean;
+}
+
+export interface StrategyComparisonRow {
+  metric: string;
+  unit: string;
+  recommendedValue: number | string;
+  naiveValue: number | string;
+  runnerUpValue: number | string;
+  winningStrategy: 'recommended' | 'naive' | 'runner_up' | 'tie';
+  isLowerBetter: boolean;
+}
+
+export interface RankedStrategySummary {
+  rank: number;
+  id: SequencingStrategyId;
+  name: string;
+  totalCostEur: number;
+  totalChangeoverHours: number;
+  totalBrokeTonnes: number;
+  washoutCount: number;
+  reversalCount: number;
+  slaCompliancePct: number;
+  marginToNextEur: number;
+  marginToWinnerEur: number;
+  isFeasible: boolean;
+  rejectionReason?: string;
+  isRecommended: boolean;
+  strictDueOrdersCount: number;
+  strictDueMetCount: number;
+}
+
+export interface BreakEvenSensitivity {
+  thresholdPenaltyHours: number | null;
+  alternativeStrategyId: SequencingStrategyId;
+  alternativeStrategyName: string;
+  currentPenaltyHours: number;
+  statement: string;
+  isHoldsAbove: boolean;
+}
+
+export interface RecommendationRationale {
+  verdict: string;
+  tradeOffStatement: string;
+  isBetterOnEveryMeasure: boolean;
+  selectionRuleStatement: string;
+  winningStrategyId: SequencingStrategyId;
+  winningStrategyName: string;
+  runnerUpStrategyId?: SequencingStrategyId;
+  runnerUpStrategyName?: string;
+  marginToRunnerUpEur: number;
+  hoursSavedVsNaive: number;
+  brokeSavedVsNaive: number;
+  costSavedVsNaiveEur: number;
+  urgentOrdersCount: number;
+  protectedUrgentCount: number;
+  breakdownRows: StrategyComparisonRow[];
+  ranking: RankedStrategySummary[];
+  breakEven: BreakEvenSensitivity;
+  limits: string[];
 }
 
 export interface OptimizationComparison {
@@ -198,6 +276,19 @@ export interface OptimizationComparison {
     runs: ScheduledRun[];
     metrics: ScheduleMetrics;
   };
+  strategies?: {
+    naive: StrategyResult;
+    colorFirst: StrategyResult;
+    grammageFirst: StrategyResult;
+    hybrid: StrategyResult;
+  };
+  recommendedStrategyId?: SequencingStrategyId;
+  conflictDetected?: boolean;
+  conflictSummary?: {
+    reversalCount: number;
+    excessHours: number;
+    excessBrokeTonnes: number;
+  };
   savings: {
     changeoverHoursSaved: number;
     brokeTonnesSaved: number;
@@ -205,7 +296,9 @@ export interface OptimizationComparison {
     financialSavingsEur: number;
     washoutsAvoided: number;
     waterSavedM3?: number;
+    reversalsAvoided?: number;
   };
+  recommendationRationale?: RecommendationRationale;
 }
 
 export interface NetRequirement {

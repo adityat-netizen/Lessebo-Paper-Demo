@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { usePlanning } from '../../context/PlanningContext';
 import { ShadeSwatch } from '../common/ShadeSwatch';
 import { ClientInputBadge } from '../common/ClientInputBadge';
@@ -12,10 +12,11 @@ import {
   Grid,
   Droplets,
   Layers,
+  Sliders,
 } from 'lucide-react';
 import { CsvExportButton, type CsvExportOption } from '../common/CsvExportButton';
 import { buildCsvContent, downloadCsvFile } from '../../utils/csvExport';
-import type { ScheduledRun } from '../../types';
+import type { ScheduledRun, ScheduleMetrics, StrategyResult } from '../../types';
 
 export const SequenceOptimizationView: React.FC = () => {
   const {
@@ -24,21 +25,68 @@ export const SequenceOptimizationView: React.FC = () => {
     setSelectedRunId,
     selectedMachine,
     lossModelConfig,
+    sequenceScenarioPreset,
+    setSequenceScenarioPreset,
+    grammageDownPenaltyHours,
+    setGrammageDownPenaltyHours,
   } = usePlanning();
 
-  const [viewMode, setViewMode] = useState<'sideBySide' | 'optimized' | 'naive'>('sideBySide');
+  type ViewModeOption = 'sideBySide' | 'hybrid' | 'color_first' | 'grammage_first' | 'naive';
+  const [viewMode, setViewMode] = useState<ViewModeOption>('sideBySide');
   const [showTransitionMatrix, setShowTransitionMatrix] = useState<boolean>(false);
 
   const { naive, optimized, savings } = optimizationResult;
+  const strategies = optimizationResult.strategies;
+  const naiveResult: StrategyResult = strategies?.naive ?? {
+    id: 'naive',
+    name: 'Naive Baseline',
+    description: 'Order book arrival',
+    runs: naive.runs,
+    metrics: naive.metrics,
+  };
+  const colorFirstResult: StrategyResult = strategies?.colorFirst ?? {
+    id: 'color_first',
+    name: 'Colour-First Ladder',
+    description: 'Format then shade ladder',
+    runs: optimized.runs,
+    metrics: optimized.metrics,
+  };
+  const grammageFirstResult: StrategyResult = strategies?.grammageFirst ?? {
+    id: 'grammage_first',
+    name: 'Grammage-First Banding',
+    description: 'Ascending grammage bands then shade ladder',
+    runs: optimized.runs,
+    metrics: optimized.metrics,
+  };
+  const hybridResult: StrategyResult = strategies?.hybrid ?? {
+    id: 'hybrid',
+    name: 'Hybrid / Cost-Minimizing',
+    description: 'Grammage banding with local 2-opt search',
+    runs: optimized.runs,
+    metrics: optimized.metrics,
+    isRecommended: true,
+  };
+  const recommendedResult = optimized;
+
+  // Active strategy runs depending on viewMode
+  const currentDisplayedRuns: ScheduledRun[] = useMemo(() => {
+    if (viewMode === 'color_first') return colorFirstResult.runs;
+    if (viewMode === 'grammage_first') return grammageFirstResult.runs;
+    if (viewMode === 'naive') return naiveResult.runs;
+    if (viewMode === 'hybrid') return hybridResult.runs;
+    return recommendedResult.runs;
+  }, [viewMode, colorFirstResult, grammageFirstResult, naiveResult, hybridResult, recommendedResult]);
 
   // Selected run for explainability inspection (defaults to first run with significant savings or selected by user)
   const activeSelectedRun: ScheduledRun =
     (selectedRunId
-      ? optimized.runs.find((r) => r.order_id === selectedRunId) ||
-        naive.runs.find((r) => r.order_id === selectedRunId)
+      ? currentDisplayedRuns.find((r) => r.order_id === selectedRunId) ||
+        recommendedResult.runs.find((r) => r.order_id === selectedRunId) ||
+        naiveResult.runs.find((r) => r.order_id === selectedRunId)
       : null) ??
-    optimized.runs[3] ??
-    optimized.runs[0];
+    currentDisplayedRuns[3] ??
+    currentDisplayedRuns[0] ??
+    recommendedResult.runs[0];
 
   const shadeNames = [
     'Bright White',
@@ -297,6 +345,202 @@ export const SequenceOptimizationView: React.FC = () => {
     },
   ];
 
+  const renderTimeline = (
+    runs: ScheduledRun[],
+    metrics: ScheduleMetrics,
+    badgeText: string,
+    badgeBg: string,
+    badgeColor: string,
+    badgeBorder: string,
+    subtitle: string,
+    isRecommended: boolean = false
+  ) => {
+    // Dynamic headline calculation
+    const washoutHeadline =
+      metrics.washoutCount === 0
+        ? 'Zero Intermediate Washouts'
+        : `${metrics.washoutCount} Intermediate Washout${metrics.washoutCount > 1 ? 's' : ''}`;
+    const reversalCount = metrics.grammageReversalsCount ?? 0;
+    const reversalHeadline = reversalCount > 0 ? `${reversalCount} GSM Reversal${reversalCount > 1 ? 's' : ''}` : null;
+    const setupHeadline = `${metrics.totalChangeoverHours}h Setup Downtime`;
+
+    return (
+      <div key={badgeText}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span
+              style={{
+                background: badgeBg,
+                color: badgeColor,
+                border: `1px solid ${badgeBorder}`,
+                padding: '2px 8px',
+                borderRadius: '4px',
+                fontSize: '0.7rem',
+                fontWeight: 700,
+              }}
+            >
+              {badgeText}
+            </span>
+            {isRecommended && (
+              <span
+                style={{
+                  background: 'var(--success-bg)',
+                  color: 'var(--success-green)',
+                  border: '1px solid #BBF7D0',
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  fontSize: '0.66rem',
+                  fontWeight: 800,
+                }}
+              >
+                RECOMMENDED
+              </span>
+            )}
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--navy-dark)' }}>
+              {subtitle}
+            </span>
+          </div>
+          <span
+            style={{
+              fontSize: '0.75rem',
+              color: metrics.washoutCount > 0 ? 'var(--danger-crimson)' : 'var(--success-green)',
+              fontWeight: 700,
+            }}
+          >
+            {washoutHeadline} • {reversalHeadline ? `${reversalHeadline} • ` : ''}{setupHeadline}
+          </span>
+        </div>
+
+        {/* Visual blocks */}
+        <div
+          style={{
+            display: 'flex',
+            gap: '4px',
+            background: isRecommended
+              ? 'linear-gradient(90deg, #F0FAFD 0%, #FFFFFF 100%)'
+              : 'var(--off-white-bg)',
+            padding: '8px',
+            borderRadius: '8px',
+            border: isRecommended ? '1px solid #BCEBF5' : '1px solid var(--border-light)',
+            overflowX: 'auto',
+          }}
+        >
+          {runs.map((run) => {
+            const isSelected = activeSelectedRun?.order_id === run.order_id;
+            const isLight =
+              run.shade_hex.toUpperCase() === '#FFFFFF' ||
+              run.shade_hex.toUpperCase() === '#F6F4ED' ||
+              run.shade_hex.toUpperCase() === '#EFE7D3';
+
+            return (
+              <div
+                key={run.order_id}
+                onClick={() => setSelectedRunId(run.order_id)}
+                style={{
+                  minWidth: '68px',
+                  height: '76px',
+                  borderRadius: '6px',
+                  backgroundColor: run.shade_hex,
+                  border: isSelected
+                    ? '3px solid var(--brand-blue)'
+                    : isLight
+                    ? '1px solid #CBD5E1'
+                    : '1px solid rgba(0,0,0,0.2)',
+                  padding: '6px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                  position: 'relative',
+                  boxShadow: isSelected ? '0 0 12px rgba(0,82,152,0.4)' : 'none',
+                  flexShrink: 0,
+                }}
+              >
+                {/* Grammage Reversal Badge on Top-Left */}
+                {run.changeoverBreakdown?.isGrammageReversal && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '-6px',
+                      left: '-6px',
+                      background: 'var(--warning-amber)',
+                      color: '#FFFFFF',
+                      borderRadius: '3px',
+                      padding: '1px 3px',
+                      fontSize: '0.58rem',
+                      fontWeight: 800,
+                      display: 'flex',
+                      alignItems: 'center',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.25)',
+                      zIndex: 2,
+                    }}
+                    title={`Grammage Step-Down Reversal: ${run.changeoverBreakdown.grammageDeltaGsm ?? ''}g GSM (${run.changeoverBreakdown.grammageDownHours ?? 0}h setup penalty)`}
+                  >
+                    ▼ GSM
+                  </div>
+                )}
+
+                {/* Washout badge on Top-Right */}
+                {run.isWashout && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '-6px',
+                      right: '-6px',
+                      background: 'var(--danger-crimson)',
+                      color: '#FFFFFF',
+                      borderRadius: '50%',
+                      width: '18px',
+                      height: '18px',
+                      fontSize: '0.62rem',
+                      fontWeight: 800,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      zIndex: 2,
+                    }}
+                    title="Costly 3.5h washout triggered"
+                  >
+                    !
+                  </div>
+                )}
+                <div
+                  style={{
+                    fontSize: '0.65rem',
+                    fontWeight: 700,
+                    color: isLight ? 'var(--navy-dark)' : '#FFFFFF',
+                    lineHeight: 1.1,
+                  }}
+                >
+                  #{run.runSequence}
+                </div>
+                <div
+                  style={{
+                    fontSize: '0.62rem',
+                    fontWeight: 600,
+                    color: isLight ? 'var(--text-secondary)' : '#E2E8F0',
+                    lineHeight: 1.1,
+                  }}
+                >
+                  {run.grammage_gsm}g
+                </div>
+                <div
+                  style={{
+                    fontSize: '0.58rem',
+                    color: isLight ? 'var(--text-muted)' : '#CBD5E1',
+                  }}
+                >
+                  +{run.changeoverHours}h
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* Hero Banner with Executive Callout */}
@@ -362,6 +606,228 @@ export const SequenceOptimizationView: React.FC = () => {
             <Grid size={15} />
             {showTransitionMatrix ? 'Hide Transition Matrix' : 'View Transition Matrix'}
           </button>
+        </div>
+      </div>
+
+      {/* Scenario Preset & Grammage Penalty Controls Card */}
+      <div
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 'var(--radius-lg)',
+          padding: '20px 24px',
+          border: '1px solid var(--border-light)',
+          boxShadow: 'var(--shadow-sm)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '16px',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Sliders size={20} color="var(--brand-blue)" />
+            <div>
+              <h3 style={{ fontSize: '1.05rem', color: 'var(--navy-dark)', fontWeight: 700, margin: 0 }}>
+                Campaign Scenario & Directional Penalty Calibration
+              </h3>
+              <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>
+                Simulate standard order books versus structural trade-offs between colour ladder and grammage steps
+              </p>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span
+              style={{
+                fontSize: '0.72rem',
+                color: 'var(--text-muted)',
+                fontStyle: 'italic',
+                background: 'var(--off-white-bg)',
+                padding: '4px 8px',
+                borderRadius: '4px',
+                border: '1px solid var(--border-light)',
+              }}
+            >
+              Illustrative / Synthetic - Not actual Lessebo results
+            </span>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gap: '20px',
+            background: 'var(--off-white-bg)',
+            padding: '16px',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--border-light)',
+          }}
+        >
+          {/* Preset Selector */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--navy-dark)' }}>
+                Active Campaign Scenario:
+              </label>
+              <span
+                style={{
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  background: sequenceScenarioPreset === 'conflict' ? '#FEF3C7' : '#E0F2FE',
+                  color: sequenceScenarioPreset === 'conflict' ? '#92400E' : 'var(--brand-blue)',
+                }}
+              >
+                {sequenceScenarioPreset === 'conflict' ? 'Conflict Mode (48 runs)' : 'Standard Plan (20 runs)'}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setSequenceScenarioPreset('standard')}
+                style={{
+                  flex: 1,
+                  minWidth: '150px',
+                  padding: '10px 12px',
+                  borderRadius: '6px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  border: sequenceScenarioPreset === 'standard' ? '2px solid var(--brand-blue)' : '1px solid var(--border-light)',
+                  background: sequenceScenarioPreset === 'standard' ? '#FFFFFF' : 'rgba(255,255,255,0.7)',
+                  color: sequenceScenarioPreset === 'standard' ? 'var(--brand-blue)' : 'var(--text-secondary)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '3px',
+                  textAlign: 'left',
+                  boxShadow: sequenceScenarioPreset === 'standard' ? 'var(--shadow-sm)' : 'none',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontWeight: 700 }}>Standard Campaign</span>
+                </div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  Current unconstrained order book arrival (20 runs)
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSequenceScenarioPreset('conflict')}
+                style={{
+                  flex: 1,
+                  minWidth: '180px',
+                  padding: '10px 12px',
+                  borderRadius: '6px',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  border: sequenceScenarioPreset === 'conflict' ? '2px solid var(--brand-blue)' : '1px solid var(--border-light)',
+                  background: sequenceScenarioPreset === 'conflict' ? '#FFFFFF' : 'rgba(255,255,255,0.7)',
+                  color: sequenceScenarioPreset === 'conflict' ? 'var(--brand-blue)' : 'var(--text-secondary)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '3px',
+                  textAlign: 'left',
+                  boxShadow: sequenceScenarioPreset === 'conflict' ? 'var(--shadow-sm)' : 'none',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontWeight: 700 }}>Heavy-grammage Light Shades</span>
+                  <span
+                    style={{
+                      fontSize: '0.62rem',
+                      fontWeight: 800,
+                      background: 'var(--warning-amber)',
+                      color: '#FFFFFF',
+                      padding: '1px 5px',
+                      borderRadius: '3px',
+                    }}
+                  >
+                    CONFLICT
+                  </span>
+                </div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  High-GSM lights vs. low-GSM darks (48 runs, synthetic)
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Grammage Step-Down Penalty Slider */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--navy-dark)' }}>
+                  Extra Step-Down Penalty:
+                </label>
+                <ClientInputBadge parameterName="Grammage Step-Down Penalty" />
+              </div>
+              <span
+                style={{
+                  fontSize: '0.82rem',
+                  fontWeight: 800,
+                  color: grammageDownPenaltyHours > 0 ? 'var(--warning-amber)' : 'var(--text-muted)',
+                  background: '#FFFFFF',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border-light)',
+                }}
+              >
+                +{grammageDownPenaltyHours.toFixed(1)} h / reversal
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <input
+                type="range"
+                min="0.0"
+                max="2.0"
+                step="0.1"
+                value={grammageDownPenaltyHours}
+                onChange={(e) => setGrammageDownPenaltyHours(parseFloat(e.target.value))}
+                style={{
+                  flex: 1,
+                  accentColor: 'var(--brand-blue)',
+                  cursor: 'pointer',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                0.0h (Symmetric baseline)
+              </span>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {[0.0, 0.6, 1.2].map((presetVal) => (
+                  <button
+                    key={presetVal}
+                    type="button"
+                    onClick={() => setGrammageDownPenaltyHours(presetVal)}
+                    style={{
+                      fontSize: '0.66rem',
+                      padding: '2px 6px',
+                      borderRadius: '3px',
+                      background: Math.abs(grammageDownPenaltyHours - presetVal) < 0.05 ? 'var(--brand-blue)' : '#FFFFFF',
+                      color: Math.abs(grammageDownPenaltyHours - presetVal) < 0.05 ? '#FFFFFF' : 'var(--text-secondary)',
+                      border: '1px solid var(--border-light)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {presetVal === 0 ? '0.0h (Zero)' : `${presetVal.toFixed(1)}h`}
+                  </button>
+                ))}
+              </div>
+              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                2.0h (Severe penalty)
+              </span>
+            </div>
+
+            <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', margin: '6px 0 0 0', lineHeight: 1.4 }}>
+              Additional mechanical slice & tension calibration when moving from heavy to light paper (e.g. 150g &rarr; 80g).
+            </p>
+          </div>
         </div>
       </div>
 
@@ -782,285 +1248,233 @@ export const SequenceOptimizationView: React.FC = () => {
             </p>
           </div>
 
-          {/* View Mode Toggle */}
-          <div style={{ display: 'flex', background: 'var(--off-white-bg)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
+          {/* Strategy Selector Toggle */}
+          <div
+            style={{
+              display: 'flex',
+              background: 'var(--off-white-bg)',
+              padding: '2px',
+              borderRadius: '6px',
+              border: '1px solid var(--border-light)',
+              flexWrap: 'wrap',
+              gap: '2px',
+            }}
+          >
             <button
               onClick={() => setViewMode('sideBySide')}
               style={{
-                padding: '5px 12px',
-                fontSize: '0.76rem',
+                padding: '5px 10px',
+                fontSize: '0.74rem',
                 fontWeight: 600,
                 borderRadius: '4px',
                 background: viewMode === 'sideBySide' ? 'var(--brand-blue)' : 'transparent',
                 color: viewMode === 'sideBySide' ? '#FFFFFF' : 'var(--text-secondary)',
+                cursor: 'pointer',
               }}
             >
-              Side-by-Side Comparison
+              Side-by-Side
             </button>
             <button
-              onClick={() => setViewMode('optimized')}
+              onClick={() => setViewMode('hybrid')}
               style={{
-                padding: '5px 12px',
-                fontSize: '0.76rem',
+                padding: '5px 10px',
+                fontSize: '0.74rem',
                 fontWeight: 600,
                 borderRadius: '4px',
-                background: viewMode === 'optimized' ? 'var(--brand-blue)' : 'transparent',
-                color: viewMode === 'optimized' ? '#FFFFFF' : 'var(--text-secondary)',
+                background: viewMode === 'hybrid' ? 'var(--brand-blue)' : 'transparent',
+                color: viewMode === 'hybrid' ? '#FFFFFF' : 'var(--text-secondary)',
+                cursor: 'pointer',
               }}
             >
-              Optimized Only
+              Hybrid {optimizationResult.recommendedStrategyId === 'hybrid' ? '(Recommended)' : ''}
+            </button>
+            <button
+              onClick={() => setViewMode('color_first')}
+              style={{
+                padding: '5px 10px',
+                fontSize: '0.74rem',
+                fontWeight: 600,
+                borderRadius: '4px',
+                background: viewMode === 'color_first' ? 'var(--brand-blue)' : 'transparent',
+                color: viewMode === 'color_first' ? '#FFFFFF' : 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+            >
+              Colour-First {optimizationResult.recommendedStrategyId === 'color_first' ? '(Recommended)' : ''}
+            </button>
+            <button
+              onClick={() => setViewMode('grammage_first')}
+              style={{
+                padding: '5px 10px',
+                fontSize: '0.74rem',
+                fontWeight: 600,
+                borderRadius: '4px',
+                background: viewMode === 'grammage_first' ? 'var(--brand-blue)' : 'transparent',
+                color: viewMode === 'grammage_first' ? '#FFFFFF' : 'var(--text-secondary)',
+                cursor: 'pointer',
+              }}
+            >
+              Grammage-First {optimizationResult.recommendedStrategyId === 'grammage_first' ? '(Recommended)' : ''}
             </button>
             <button
               onClick={() => setViewMode('naive')}
               style={{
-                padding: '5px 12px',
-                fontSize: '0.76rem',
+                padding: '5px 10px',
+                fontSize: '0.74rem',
                 fontWeight: 600,
                 borderRadius: '4px',
                 background: viewMode === 'naive' ? 'var(--brand-blue)' : 'transparent',
                 color: viewMode === 'naive' ? '#FFFFFF' : 'var(--text-secondary)',
+                cursor: 'pointer',
               }}
             >
-              Naive Only
+              Naive Baseline
             </button>
           </div>
         </div>
 
         {/* Schedule Timeline Rendering */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {/* NAIVE TIMELINE */}
-          {(viewMode === 'sideBySide' || viewMode === 'naive') && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span
-                    style={{
-                      background: 'var(--danger-bg)',
-                      color: 'var(--danger-crimson)',
-                      border: '1px solid #FECACA',
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      fontSize: '0.7rem',
-                      fontWeight: 700,
-                    }}
-                  >
-                    NAIVE SEQUENCE
-                  </span>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--navy-dark)' }}>
-                    Order-Arrival (Un-sequenced)
-                  </span>
-                </div>
-                <span style={{ fontSize: '0.75rem', color: 'var(--danger-crimson)', fontWeight: 700 }}>
-                  {naive.metrics.washoutCount} Washouts • {naive.metrics.totalChangeoverHours}h Downtime
-                </span>
-              </div>
-
-              {/* Visual blocks */}
-              <div
-                style={{
-                  display: 'flex',
-                  gap: '4px',
-                  background: 'var(--off-white-bg)',
-                  padding: '8px',
-                  borderRadius: '8px',
-                  border: '1px solid var(--border-light)',
-                  overflowX: 'auto',
-                }}
-              >
-                {naive.runs.map((run) => {
-                  const isSelected = activeSelectedRun?.order_id === run.order_id;
-                  const isLight =
-                    run.shade_hex.toUpperCase() === '#FFFFFF' ||
-                    run.shade_hex.toUpperCase() === '#F6F4ED' ||
-                    run.shade_hex.toUpperCase() === '#EFE7D3';
-
-                  return (
-                    <div
-                      key={run.order_id}
-                      onClick={() => setSelectedRunId(run.order_id)}
-                      style={{
-                        minWidth: '68px',
-                        height: '76px',
-                        borderRadius: '6px',
-                        backgroundColor: run.shade_hex,
-                        border: isSelected
-                          ? '3px solid var(--cyan-accent)'
-                          : isLight
-                          ? '1px solid #CBD5E1'
-                          : '1px solid rgba(0,0,0,0.2)',
-                        padding: '6px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'space-between',
-                        cursor: 'pointer',
-                        position: 'relative',
-                        boxShadow: isSelected ? '0 0 10px rgba(13,187,223,0.5)' : 'none',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {/* Washout badge on top */}
-                      {run.isWashout && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            top: '-6px',
-                            right: '-6px',
-                            background: 'var(--danger-crimson)',
-                            color: '#FFFFFF',
-                            borderRadius: '50%',
-                            width: '18px',
-                            height: '18px',
-                            fontSize: '0.62rem',
-                            fontWeight: 800,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                          }}
-                          title="Costly 3.5h washout triggered"
-                        >
-                          !
-                        </div>
-                      )}
-                      <div
-                        style={{
-                          fontSize: '0.65rem',
-                          fontWeight: 700,
-                          color: isLight ? 'var(--navy-dark)' : '#FFFFFF',
-                          lineHeight: 1.1,
-                        }}
-                      >
-                        #{run.runSequence}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '0.62rem',
-                          fontWeight: 600,
-                          color: isLight ? 'var(--text-secondary)' : '#E2E8F0',
-                          lineHeight: 1.1,
-                        }}
-                      >
-                        {run.grammage_gsm}g
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '0.58rem',
-                          color: isLight ? 'var(--text-muted)' : '#CBD5E1',
-                        }}
-                      >
-                        +{run.changeoverHours}h
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+          {viewMode === 'sideBySide' && (
+            <>
+              {renderTimeline(
+                naiveResult.runs,
+                naiveResult.metrics,
+                'NAIVE SEQUENCE',
+                'var(--danger-bg)',
+                'var(--danger-crimson)',
+                '#FECACA',
+                'Order-Arrival (Un-sequenced FIFO Baseline)'
+              )}
+              {renderTimeline(
+                recommendedResult.runs,
+                recommendedResult.metrics,
+                'RECOMMENDED SEQUENCE',
+                'var(--brand-blue-light)',
+                'var(--brand-blue)',
+                '#BCEBF5',
+                `${recommendedResult.metrics.strategyName ?? 'Intelligent Optimized'} Sequence`,
+                true
+              )}
+            </>
           )}
 
-          {/* OPTIMIZED TIMELINE */}
-          {(viewMode === 'sideBySide' || viewMode === 'optimized') && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span
-                    style={{
-                      background: 'var(--brand-blue-light)',
-                      color: 'var(--brand-blue)',
-                      border: '1px solid #BCEBF5',
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      fontSize: '0.7rem',
-                      fontWeight: 700,
-                    }}
-                  >
-                    OPTIMIZED SEQUENCE
-                  </span>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--navy-dark)' }}>
-                    Intelligent Colour Ladder & Grammage Grouping
-                  </span>
-                </div>
-                <span style={{ fontSize: '0.75rem', color: 'var(--success-green)', fontWeight: 700 }}>
-                  Zero Intermediate Washouts • Only {optimized.metrics.totalChangeoverHours}h Total Setup
-                </span>
-              </div>
+          {viewMode === 'hybrid' &&
+            renderTimeline(
+              hybridResult.runs,
+              hybridResult.metrics,
+              'HYBRID SEQUENCE',
+              'var(--brand-blue-light)',
+              'var(--brand-blue)',
+              '#BCEBF5',
+              'Grammage Banding + Light-to-Dark inside Bands + 2-Opt Local Search',
+              hybridResult.isRecommended ?? optimizationResult.recommendedStrategyId === 'hybrid'
+            )}
 
-              {/* Visual blocks */}
-              <div
+          {viewMode === 'color_first' &&
+            renderTimeline(
+              colorFirstResult.runs,
+              colorFirstResult.metrics,
+              'COLOUR-FIRST LADDER',
+              '#E0F2FE',
+              'var(--brand-blue)',
+              '#BAE6FD',
+              'Strict Light-to-Dark Ladder (Format \u2192 Shade Group \u2192 Shade Tier)',
+              colorFirstResult.isRecommended ?? optimizationResult.recommendedStrategyId === 'color_first'
+            )}
+
+          {viewMode === 'grammage_first' &&
+            renderTimeline(
+              grammageFirstResult.runs,
+              grammageFirstResult.metrics,
+              'GRAMMAGE-FIRST BANDING',
+              '#F3E8FF',
+              '#7C3AED',
+              '#E9D5FF',
+              'Ascending Grammage Bands \u2192 Light-to-Dark inside Bands',
+              grammageFirstResult.isRecommended ?? optimizationResult.recommendedStrategyId === 'grammage_first'
+            )}
+
+          {viewMode === 'naive' &&
+            renderTimeline(
+              naiveResult.runs,
+              naiveResult.metrics,
+              'NAIVE SEQUENCE',
+              'var(--danger-bg)',
+              'var(--danger-crimson)',
+              '#FECACA',
+              'Order-Arrival (Un-sequenced FIFO Baseline)',
+              naiveResult.isRecommended ?? optimizationResult.recommendedStrategyId === 'naive'
+            )}
+
+          {/* Timeline Legend */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              flexWrap: 'wrap',
+              padding: '10px 14px',
+              background: 'var(--off-white-bg)',
+              borderRadius: '6px',
+              border: '1px solid var(--border-light)',
+              fontSize: '0.74rem',
+              color: 'var(--text-secondary)',
+              marginTop: '4px',
+            }}
+          >
+            <span style={{ fontWeight: 700, color: 'var(--navy-dark)' }}>Timeline Legend:</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span
                 style={{
-                  display: 'flex',
-                  gap: '4px',
-                  background: 'linear-gradient(90deg, #F0FAFD 0%, #FFFFFF 100%)',
-                  padding: '8px',
-                  borderRadius: '8px',
-                  border: '1px solid #BCEBF5',
-                  overflowX: 'auto',
+                  background: 'var(--danger-crimson)',
+                  color: '#FFFFFF',
+                  borderRadius: '50%',
+                  width: '16px',
+                  height: '16px',
+                  fontSize: '0.62rem',
+                  fontWeight: 800,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
-                {optimized.runs.map((run) => {
-                  const isSelected = activeSelectedRun?.order_id === run.order_id;
-                  const isLight =
-                    run.shade_hex.toUpperCase() === '#FFFFFF' ||
-                    run.shade_hex.toUpperCase() === '#F6F4ED' ||
-                    run.shade_hex.toUpperCase() === '#EFE7D3';
-
-                  return (
-                    <div
-                      key={run.order_id}
-                      onClick={() => setSelectedRunId(run.order_id)}
-                      style={{
-                        minWidth: '68px',
-                        height: '76px',
-                        borderRadius: '6px',
-                        backgroundColor: run.shade_hex,
-                        border: isSelected
-                          ? '3px solid var(--brand-blue)'
-                          : isLight
-                          ? '1px solid #CBD5E1'
-                          : '1px solid rgba(0,0,0,0.2)',
-                        padding: '6px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'space-between',
-                        cursor: 'pointer',
-                        position: 'relative',
-                        boxShadow: isSelected ? '0 0 12px rgba(0,82,152,0.4)' : 'none',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: '0.65rem',
-                          fontWeight: 700,
-                          color: isLight ? 'var(--navy-dark)' : '#FFFFFF',
-                          lineHeight: 1.1,
-                        }}
-                      >
-                        #{run.runSequence}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '0.62rem',
-                          fontWeight: 600,
-                          color: isLight ? 'var(--text-secondary)' : '#E2E8F0',
-                          lineHeight: 1.1,
-                        }}
-                      >
-                        {run.grammage_gsm}g
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '0.58rem',
-                          color: isLight ? 'var(--text-muted)' : '#CBD5E1',
-                        }}
-                      >
-                        +{run.changeoverHours}h
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                !
+              </span>
+              <span>Intermediate Deep Washout (Colour backtrack)</span>
             </div>
-          )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span
+                style={{
+                  background: 'var(--warning-amber)',
+                  color: '#FFFFFF',
+                  borderRadius: '3px',
+                  padding: '1px 4px',
+                  fontSize: '0.58rem',
+                  fontWeight: 800,
+                }}
+              >
+                ▼ GSM
+              </span>
+              <span>Grammage Step-Down Reversal (Heavy &rarr; Light step)</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span
+                style={{
+                  width: '14px',
+                  height: '14px',
+                  borderRadius: '3px',
+                  border: '2px solid var(--brand-blue)',
+                  background: '#FFFFFF',
+                  display: 'inline-block',
+                }}
+              />
+              <span>Selected Run Focus</span>
+            </div>
+            <span style={{ fontStyle: 'italic', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+              Illustrative / Synthetic - Not actual Lessebo results
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1115,7 +1529,7 @@ export const SequenceOptimizationView: React.FC = () => {
                 cursor: 'pointer',
               }}
             >
-              {optimized.runs.map((r) => (
+              {currentDisplayedRuns.map((r) => (
                 <option key={r.order_id} value={r.order_id}>
                   Run #{r.runSequence}: {r.shade_name} ({r.grammage_gsm}g) — {r.customer_name}
                 </option>

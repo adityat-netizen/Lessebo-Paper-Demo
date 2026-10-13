@@ -1,5 +1,5 @@
 import React from 'react';
-import { usePlanning } from '../../context/PlanningContext';
+import { usePlanning, type TabId } from '../../context/PlanningContext';
 import { MetricCard } from '../common/MetricCard';
 import {
   TrendingUp,
@@ -125,7 +125,13 @@ export const ExecutiveDashboard: React.FC = () => {
     downloadCsvFile('executive_kpis', 'active_plan', csv);
   };
 
-  const pipelineSteps = [
+  const pipelineSteps: {
+    step: string;
+    title: string;
+    desc: string;
+    tab?: TabId;
+    isHero?: boolean;
+  }[] = [
     {
       step: '01',
       title: 'Sales History',
@@ -161,7 +167,6 @@ export const ExecutiveDashboard: React.FC = () => {
       step: '06',
       title: 'Business Impact',
       desc: 'Changeover reduction, broke minimization & capacity',
-      tab: 'scenarios' as const,
     },
   ];
 
@@ -344,7 +349,7 @@ export const ExecutiveDashboard: React.FC = () => {
           {pipelineSteps.map((item) => (
             <div
               key={item.step}
-              onClick={() => setActiveTab(item.tab)}
+              onClick={() => item.tab && setActiveTab(item.tab)}
               style={{
                 background: item.isHero
                   ? 'linear-gradient(135deg, #F0FAFD 0%, #FFFFFF 100%)'
@@ -354,17 +359,21 @@ export const ExecutiveDashboard: React.FC = () => {
                   : '1px solid var(--border-light)',
                 borderRadius: 'var(--radius-md)',
                 padding: '16px',
-                cursor: 'pointer',
+                cursor: item.tab ? 'pointer' : 'default',
                 transition: 'all 0.2s ease',
                 position: 'relative',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-2px)';
-                e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+                if (item.tab) {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+                }
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = 'none';
+                if (item.tab) {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = 'none';
+                }
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -392,7 +401,7 @@ export const ExecutiveDashboard: React.FC = () => {
                     Hero
                   </span>
                 )}
-                <ChevronRight size={14} color="var(--text-muted)" />
+                {item.tab && <ChevronRight size={14} color="var(--text-muted)" />}
               </div>
               <h4 style={{ fontSize: '0.9rem', color: 'var(--navy-dark)', fontWeight: 700, marginBottom: '6px' }}>
                 {item.title}

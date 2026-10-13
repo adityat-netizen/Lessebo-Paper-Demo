@@ -23,6 +23,11 @@ export function calculateChangeover(
       formatHours: 0.0,
       totalHours: 0.5,
       isWashout: false,
+      isGrammageReversal: false,
+      grammageDirection: 'same',
+      grammageDeltaGsm: 0,
+      grammageUpHours: 0.0,
+      grammageDownHours: 0.0,
       brokeTonnes: totalBroke,
       colorBrokeTonnes: 0,
       grammageBrokeTonnes: 0,
@@ -68,18 +73,44 @@ export function calculateChangeover(
     reasons.push(`Light wash: ${fromRun.shade_name} to ${toRun.shade_name}`);
   }
 
-  // 2. Grammage Delta Penalty
+  // 2. Grammage Delta Penalty (Direction-Aware)
   const grammageDelta = Math.abs(fromRun.grammage_gsm - toRun.grammage_gsm);
-  let grammageHours = 0.0;
+  const isGrammageReversal = fromRun.grammage_gsm > toRun.grammage_gsm;
+  const grammageDirection: 'up' | 'down' | 'same' =
+    fromRun.grammage_gsm > toRun.grammage_gsm
+      ? 'down'
+      : fromRun.grammage_gsm < toRun.grammage_gsm
+      ? 'up'
+      : 'same';
+
+  let baseGrammageHours = 0.0;
   if (grammageDelta === 0) {
-    grammageHours = 0.0;
+    baseGrammageHours = 0.0;
   } else if (grammageDelta <= 40) {
-    grammageHours = 0.5;
-    reasons.push(`Caliper step: ${fromRun.grammage_gsm}g to ${toRun.grammage_gsm}g (small +${grammageDelta}gsm)`);
+    baseGrammageHours = 0.5;
+    reasons.push(`Caliper step: ${fromRun.grammage_gsm}g to ${toRun.grammage_gsm}g (small ${isGrammageReversal ? '-' : '+'}${grammageDelta}gsm)`);
   } else {
-    grammageHours = 1.2;
+    baseGrammageHours = 1.2;
     reasons.push(`Caliper jump: ${fromRun.grammage_gsm}g to ${toRun.grammage_gsm}g (large delta ${grammageDelta}gsm)`);
   }
+
+  // Directional extra penalty: step-down heavy to light requires calender nip release & steam curve restabilization
+  const stepDownPenalty = config?.grammageStepDownPenaltyHours ?? 0.0;
+  const largeJumpThreshold = config?.grammageLargeJumpThresholdGsm ?? 40;
+  const largeJumpPenalty = config?.grammageLargeJumpPenaltyHours ?? 0.0;
+  const extraDownPenalty = isGrammageReversal
+    ? stepDownPenalty + (grammageDelta > largeJumpThreshold ? largeJumpPenalty : 0)
+    : 0.0;
+
+  if (isGrammageReversal && extraDownPenalty > 0) {
+    reasons.push(
+      `Heavy-to-light step (${fromRun.grammage_gsm}g ➔ ${toRun.grammage_gsm}g): +${Math.round(extraDownPenalty * 100) / 100}h calender reset [Client input required]`
+    );
+  }
+
+  const grammageHours = Math.round((baseGrammageHours + extraDownPenalty) * 100) / 100;
+  const grammageUpHours = grammageDirection === 'up' ? baseGrammageHours : 0.0;
+  const grammageDownHours = grammageDirection === 'down' ? grammageHours : 0.0;
 
   // 3. Format Change Penalty
   let formatHours = 0.0;
@@ -135,6 +166,11 @@ export function calculateChangeover(
     formatHours,
     totalHours,
     isWashout,
+    isGrammageReversal,
+    grammageDirection,
+    grammageDeltaGsm: grammageDelta,
+    grammageUpHours,
+    grammageDownHours,
     brokeTonnes,
     colorBrokeTonnes,
     grammageBrokeTonnes,

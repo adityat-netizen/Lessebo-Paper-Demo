@@ -26,6 +26,12 @@ export interface LossModelConfig {
   grammageStepMultiplier: number; // default 1.0x (Client input required)
   formatSwitchMultiplier: number; // default 1.0x (Client input required)
 
+  // Direction-Aware Grammage Transition Penalties (Generic placeholder - Client input required)
+  enableGrammageDirectionPenalty?: boolean;
+  grammageStepDownPenaltyHours?: number; // default 0.0 (Client input required)
+  grammageLargeJumpThresholdGsm?: number; // default 40 gsm (Client input required)
+  grammageLargeJumpPenaltyHours?: number; // default 0.0 (Client input required)
+
   // Component 2: Start-up / Restart Broke
   enableStartupLoss: boolean;
   startupLossTonnesPerRun: number; // default 0.8 t per run (Client input required)
@@ -89,6 +95,12 @@ export const DEFAULT_LOSS_MODEL_CONFIG: LossModelConfig = {
 
   enableStartupLoss: true,
   startupLossTonnesPerRun: 0.8,
+
+  // Direction-aware grammage (Defaults off / 0 for backward compatibility)
+  enableGrammageDirectionPenalty: false,
+  grammageStepDownPenaltyHours: 0.0,
+  grammageLargeJumpThresholdGsm: 40,
+  grammageLargeJumpPenaltyHours: 0.0,
 
   enableWashoutCleaningLoss: true,
   waterPerWashoutM3: 18.0,

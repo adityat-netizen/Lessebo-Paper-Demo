@@ -8,10 +8,6 @@ import { ExecutiveDashboard } from './components/executive/ExecutiveDashboard';
 import { SalesForecastView } from './components/forecast/SalesForecastView';
 import { ProductionPlanningView } from './components/planning/ProductionPlanningView';
 import { SequenceOptimizationView } from './components/sequence/SequenceOptimizationView';
-import { ScenarioAnalysisView } from './components/scenario/ScenarioAnalysisView';
-import { WaterTelemetryView } from './components/water/telemetry/WaterTelemetryView';
-import { WaterAnomalyView } from './components/water/anomaly/WaterAnomalyView';
-import { WaterIncidentView } from './components/water/incident/WaterIncidentView';
 
 const MainContent: React.FC = () => {
   const { activeTab } = usePlanning();
@@ -26,14 +22,12 @@ const MainContent: React.FC = () => {
         flex: 1,
       }}
     >
-      {activeTab === 'executive' && <ExecutiveDashboard />}
       {activeTab === 'forecast' && <SalesForecastView />}
       {activeTab === 'planning' && <ProductionPlanningView />}
       {activeTab === 'sequencing' && <SequenceOptimizationView />}
-      {activeTab === 'scenarios' && <ScenarioAnalysisView />}
-      {activeTab === 'water-telemetry' && <WaterTelemetryView />}
-      {activeTab === 'water-anomalies' && <WaterAnomalyView />}
-      {activeTab === 'water-incidents' && <WaterIncidentView />}
+      {(activeTab === 'executive' || !['forecast', 'planning', 'sequencing'].includes(activeTab)) && (
+        <ExecutiveDashboard />
+      )}
     </main>
   );
 };

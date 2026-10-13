@@ -25,6 +25,7 @@ import salesRaw from '../data/sales_orders_monthly.json';
 import inventoryRaw from '../data/current_inventory.json';
 import machineCapacityRaw from '../data/machine_capacity.json';
 import upcomingOrdersRaw from '../data/upcoming_order_book.json';
+import conflictOrdersRaw from '../data/conflict_order_book.json';
 
 import { computeForecast, type ForecastCalculationResult } from '../engine/forecastEngine';
 import { computeNetRequirements, type PlanningCalculationResult } from '../engine/planningEngine';
@@ -103,6 +104,12 @@ interface PlanningContextValue {
   forecastResult: ForecastCalculationResult;
   planningResult: PlanningCalculationResult;
   optimizationResult: OptimizationComparison;
+
+  // Sequence Scenario & Grammage Conflict State
+  sequenceScenarioPreset: 'standard' | 'conflict';
+  setSequenceScenarioPreset: (preset: 'standard' | 'conflict') => void;
+  grammageDownPenaltyHours: number;
+  setGrammageDownPenaltyHours: (hrs: number) => void;
 }
 
 const PlanningContext = createContext<PlanningContextValue | null>(null);
@@ -113,6 +120,20 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const inventory = inventoryRaw as InventoryItem[];
   const machineCapacity = machineCapacityRaw as MachineCapacity[];
   const upcomingOrders = upcomingOrdersRaw as CampaignOrder[];
+  const conflictOrders = conflictOrdersRaw as CampaignOrder[];
+
+  // Sequence Scenario & Grammage Conflict state
+  const [sequenceScenarioPreset, setSequenceScenarioPresetState] = useState<'standard' | 'conflict'>('standard');
+  const [grammageDownPenaltyHours, setGrammageDownPenaltyHours] = useState<number>(0.0);
+
+  const setSequenceScenarioPreset = (preset: 'standard' | 'conflict') => {
+    setSequenceScenarioPresetState(preset);
+    if (preset === 'conflict') {
+      setGrammageDownPenaltyHours(0.6);
+    } else {
+      setGrammageDownPenaltyHours(0.0);
+    }
+  };
 
   // UI Navigation
   const [activeTab, setActiveTab] = useState<TabId>('executive');
@@ -380,14 +401,23 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Live Memoized Sequence Optimization synced with active scenario parameters
   const optimizationResult = useMemo(() => {
+    const ordersToSchedule = sequenceScenarioPreset === 'conflict' ? conflictOrders : upcomingOrders;
+    const effectiveLossConfig: LossModelConfig = {
+      ...lossModelConfig,
+      enableGrammageDirectionPenalty: grammageDownPenaltyHours > 0,
+      grammageStepDownPenaltyHours: grammageDownPenaltyHours,
+      grammageLargeJumpThresholdGsm: 40,
+      grammageLargeJumpPenaltyHours: grammageDownPenaltyHours > 0 ? 0.4 : 0.0,
+    };
+
     return optimizeSequence(
-      upcomingOrders,
+      ordersToSchedule,
       selectedMachine,
       activeScenarioParams.washoutMultiplier,
       activeScenarioParams.brokeRateTph,
-      lossModelConfig
+      effectiveLossConfig
     );
-  }, [upcomingOrders, selectedMachine, activeScenarioParams, lossModelConfig]);
+  }, [upcomingOrders, conflictOrders, selectedMachine, activeScenarioParams, lossModelConfig, sequenceScenarioPreset, grammageDownPenaltyHours]);
 
   return (
     <PlanningContext.Provider
@@ -440,6 +470,12 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setLossModelConfig,
         updateLossModelConfig,
         resetLossModelConfig,
+
+        // Sequence Scenario & Grammage Conflict State
+        sequenceScenarioPreset,
+        setSequenceScenarioPreset,
+        grammageDownPenaltyHours,
+        setGrammageDownPenaltyHours,
 
         // Synchronized Results
         forecastResult,

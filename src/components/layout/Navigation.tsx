@@ -5,10 +5,6 @@ import {
   TrendingUp,
   CalendarDays,
   Sparkles,
-  SlidersHorizontal,
-  Activity,
-  AlertTriangle,
-  FileSearch,
 } from 'lucide-react';
 
 export const Navigation: React.FC = () => {
@@ -42,29 +38,6 @@ export const Navigation: React.FC = () => {
       icon: <Sparkles size={16} />,
       isHero: true,
     },
-    {
-      id: 'scenarios',
-      label: '5. Scenario / What-If Sandbox',
-      icon: <SlidersHorizontal size={16} />,
-    },
-    {
-      id: 'water-telemetry',
-      label: '6. SCADA Telemetry',
-      icon: <Activity size={16} />,
-      isWaterTrack: true,
-    },
-    {
-      id: 'water-anomalies',
-      label: '7. Anomaly Detection',
-      icon: <AlertTriangle size={16} />,
-      isWaterTrack: true,
-    },
-    {
-      id: 'water-incidents',
-      label: '8. Incident Root Cause',
-      icon: <FileSearch size={16} />,
-      isWaterTrack: true,
-    },
   ];
 
   return (
@@ -86,7 +59,9 @@ export const Navigation: React.FC = () => {
         }}
       >
         {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
+          const isActive = tab.id === 'executive'
+            ? activeTab === 'executive' || !['forecast', 'planning', 'sequencing'].includes(activeTab)
+            : activeTab === tab.id;
           return (
             <button
               key={tab.id}
