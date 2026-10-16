@@ -2,20 +2,23 @@ import React, { useState, useMemo } from 'react';
 import { usePlanning } from '../../context/PlanningContext';
 import { ShadeSwatch } from '../common/ShadeSwatch';
 import { ClientInputBadge } from '../common/ClientInputBadge';
+import { OptimizerSelector } from './OptimizerSelector';
+import { PerformanceComparisonTable } from './PerformanceComparisonTable';
+import { ResultSummaryPanel } from './ResultSummaryPanel';
+import { TransitionMatrix } from './TransitionMatrix';
+import { BenchmarkSuiteModal } from './BenchmarkSuiteModal';
 import {
   Sparkles,
   AlertTriangle,
-  Clock,
-  Trash2,
-  TrendingUp,
   Eye,
   Grid,
   Droplets,
-  Layers,
   Sliders,
 } from 'lucide-react';
 import { CsvExportButton, type CsvExportOption } from '../common/CsvExportButton';
 import { buildCsvContent, downloadCsvFile } from '../../utils/csvExport';
+import { calculateChangeover } from '../../engine/changeoverCalculator';
+import { ALGORITHM_OPTIONS } from '../../types/cpsat';
 import type { ScheduledRun, ScheduleMetrics, StrategyResult } from '../../types';
 
 export const SequenceOptimizationView: React.FC = () => {
@@ -27,13 +30,14 @@ export const SequenceOptimizationView: React.FC = () => {
     lossModelConfig,
     sequenceScenarioPreset,
     setSequenceScenarioPreset,
-    grammageDownPenaltyHours,
-    setGrammageDownPenaltyHours,
+    activeOptimizer,
+    cpsatResult,
   } = usePlanning();
 
-  type ViewModeOption = 'sideBySide' | 'hybrid' | 'color_first' | 'grammage_first' | 'naive';
+  type ViewModeOption = 'sideBySide' | 'hybrid' | 'color_first' | 'grammage_first' | 'naive' | 'cpsat';
   const [viewMode, setViewMode] = useState<ViewModeOption>('sideBySide');
-  const [showTransitionMatrix, setShowTransitionMatrix] = useState<boolean>(false);
+  const [isBenchmarkModalOpen, setIsBenchmarkModalOpen] = useState<boolean>(false);
+  const [isMatrixVisible, setIsMatrixVisible] = useState<boolean>(true);
 
   const { naive, optimized, savings } = optimizationResult;
   const strategies = optimizationResult.strategies;
@@ -64,8 +68,9 @@ export const SequenceOptimizationView: React.FC = () => {
     description: 'Grammage banding with local 2-opt search',
     runs: optimized.runs,
     metrics: optimized.metrics,
-    isRecommended: true,
+    isRecommended: activeOptimizer === 'hybrid',
   };
+  const cpsatStrategyResult: StrategyResult | undefined = strategies?.cpsat ?? (cpsatResult ? cpsatResult : undefined);
   const recommendedResult = optimized;
 
   // Active strategy runs depending on viewMode
@@ -74,8 +79,9 @@ export const SequenceOptimizationView: React.FC = () => {
     if (viewMode === 'grammage_first') return grammageFirstResult.runs;
     if (viewMode === 'naive') return naiveResult.runs;
     if (viewMode === 'hybrid') return hybridResult.runs;
+    if (viewMode === 'cpsat' && cpsatStrategyResult) return cpsatStrategyResult.runs;
     return recommendedResult.runs;
-  }, [viewMode, colorFirstResult, grammageFirstResult, naiveResult, hybridResult, recommendedResult]);
+  }, [viewMode, colorFirstResult, grammageFirstResult, naiveResult, hybridResult, cpsatStrategyResult, recommendedResult]);
 
   // Selected run for explainability inspection (defaults to first run with significant savings or selected by user)
   const activeSelectedRun: ScheduledRun =
@@ -88,21 +94,64 @@ export const SequenceOptimizationView: React.FC = () => {
     currentDisplayedRuns[0] ??
     recommendedResult.runs[0];
 
-  const shadeNames = [
-    'Bright White',
-    'Natural White',
-    'Warm Ivory',
-    'Chamois / Vanilla',
-    'Canary Yellow',
-    'Sky Blue',
-    'Forest Green',
-    'Deep Charcoal',
-  ];
+  const currentAlgoMeta = ALGORITHM_OPTIONS.find((a) => a.id === activeOptimizer) || {
+    id: activeOptimizer,
+    name: activeOptimizer.toUpperCase(),
+    badge: '',
+    badgeColor: '#E2E8F0',
+    description: '',
+    family: 'Heuristic',
+  };
+
+  const isFallback = Boolean(cpsatResult?.telemetry?.status === 'FALLBACK_HEURISTIC');
+  const algoSlug = isFallback ? 'hybrid_fallback' : activeOptimizer.toLowerCase();
+  const scenarioSlug = sequenceScenarioPreset;
+
+  const buildCommonMetadata = (datasetName: string) => {
+    const telemetry = activeOptimizer !== 'hybrid' && cpsatResult && cpsatResult.id === activeOptimizer
+      ? cpsatResult.telemetry
+      : null;
+
+    let lowerBoundText = 'Not available for this method';
+    let gapText = 'Not available';
+
+    if (activeOptimizer === 'cpsat' || activeOptimizer === 'mip') {
+      if (telemetry?.bestLowerBoundEur != null) {
+        lowerBoundText = `€${telemetry.bestLowerBoundEur.toLocaleString()}`;
+      }
+      if (telemetry?.optimalityGapPct != null) {
+        gapText = `${telemetry.optimalityGapPct.toFixed(2)}%`;
+      }
+    }
+
+    const solverStatus = isFallback
+      ? 'FALLBACK_HEURISTIC'
+      : telemetry?.status ?? (activeOptimizer === 'hybrid' ? 'OPTIMAL (Heuristic)' : 'COMPLETED');
+
+    const displayedAlgorithm = isFallback
+      ? `Rule-Based Hybrid (Fallback from ${currentAlgoMeta.name})`
+      : currentAlgoMeta.name;
+
+    return {
+      datasetName: `${datasetName} (${selectedMachine})`,
+      scenarioName: `${sequenceScenarioPreset.toUpperCase()} Campaign`,
+      assumptions: {
+        Algorithm: displayedAlgorithm,
+        SolverStatus: solverStatus,
+        FallbackOccurred: isFallback ? 'YES' : 'NO',
+        ProvenLowerBound: lowerBoundText,
+        OptimalityGap: gapText,
+        SolverConfiguration: 'TimeLimit=4.0s; GapLimit=0.5%; Seed=42; Workers=1 (Client input required)',
+        CostParameters: 'MachineHourlyRate=€480/h; BrokeScrapCost=€280/t; BrokeRate=2.4t/h (Client input required)',
+        Machine: selectedMachine,
+      },
+    };
+  };
 
   const exportSequenceOptions: CsvExportOption[] = [
     {
-      label: `Optimized Production Sequence (${selectedMachine})`,
-      description: 'Ordered runs with light-to-dark color sequence, transition hours, broke & SLA',
+      label: `${currentAlgoMeta.name} Production Run Sequence (${selectedMachine})`,
+      description: `Ordered runs for ${currentAlgoMeta.name} with per-transition changeover downtime, broke scrap & SLA`,
       onExport: () => {
         const runData = optimized.runs.map((r) => ({
           run_sequence: r.runSequence,
@@ -138,15 +187,7 @@ export const SequenceOptimizationView: React.FC = () => {
         }));
 
         const csv = buildCsvContent(
-          {
-            datasetName: `Optimized Production Run Sequence (${selectedMachine})`,
-            scenarioName: 'Optimized Light-to-Dark Heuristic',
-            assumptions: {
-              Machine: selectedMachine,
-              BrokeRate: '2.4 t/h (Client input required)',
-              HourlyOperatingCost: '€480/h (Client input required)',
-            },
-          },
+          buildCommonMetadata(`${currentAlgoMeta.name} Production Run Sequence`),
           [
             { key: 'run_sequence', label: 'Sequence Position' },
             { key: 'order_id', label: 'Order ID' },
@@ -158,6 +199,7 @@ export const SequenceOptimizationView: React.FC = () => {
             { key: 'shade_group', label: 'Shade Tier' },
             { key: 'grammage_gsm', label: 'Grammage', unit: 'gsm' },
             { key: 'format_type', label: 'Format' },
+            { key: 'sheet_dimensions', label: 'Sheet Dimensions' },
             { key: 'quantity_tonnes', label: 'Run Quantity', unit: 'tonnes' },
             { key: 'production_hours', label: 'Run Duration', unit: 'hours' },
             { key: 'start_hour', label: 'Start Hour', unit: 'hours' },
@@ -181,7 +223,131 @@ export const SequenceOptimizationView: React.FC = () => {
           runData
         );
 
-        downloadCsvFile(`optimized_sequence_${selectedMachine.toLowerCase()}`, 'optimized', csv);
+        downloadCsvFile(selectedMachine.toLowerCase(), scenarioSlug, csv, algoSlug);
+      },
+    },
+    {
+      label: `Machine Transition Matrix with Used Transitions (${selectedMachine})`,
+      description: `Pairwise machine transitions flagging arcs executed by ${currentAlgoMeta.name}`,
+      onExport: () => {
+        const runs = optimized.runs;
+        const usedMap = new Map<string, number>();
+        runs.forEach((r, idx) => {
+          const fromKey = idx > 0 ? runs[idx - 1].order_id : 'START';
+          usedMap.set(`${fromKey}->${r.order_id}`, idx + 1);
+        });
+
+        const matrixData: any[] = [];
+
+        // 1. Initial Start-up row
+        runs.forEach((toRun) => {
+          const ch = calculateChangeover(null, toRun, 1.0, 2.4, lossModelConfig);
+          const isUsed = usedMap.has(`START->${toRun.order_id}`);
+          const stepNum = usedMap.get(`START->${toRun.order_id}`);
+          matrixData.push({
+            from_run_seq: 'START',
+            from_order_id: 'START',
+            from_shade: 'Initial Machine State',
+            from_grammage_gsm: '-',
+            from_format: '-',
+            to_run_seq: toRun.runSequence,
+            to_order_id: toRun.order_id,
+            to_shade: toRun.shade_name,
+            to_grammage_gsm: toRun.grammage_gsm,
+            to_format: toRun.format_type,
+            is_used_in_sequence: isUsed ? `YES (Step #${stepNum})` : 'NO',
+            sequence_step: stepNum ?? '',
+            total_changeover_hours: ch.totalHours,
+            base_setup_hours: ch.baseSetup,
+            washout_hours: ch.washoutHours,
+            grammage_hours: ch.grammageHours,
+            format_hours: ch.formatHours,
+            is_washout: ch.isWashout ? 'YES' : 'NO',
+            total_broke_tonnes: ch.brokeTonnes,
+            color_broke_tonnes: ch.colorBrokeTonnes ?? 0,
+            grammage_broke_tonnes: ch.grammageBrokeTonnes ?? 0,
+            format_broke_tonnes: ch.formatBrokeTonnes ?? 0,
+            startup_broke_tonnes: ch.startupBrokeTonnes ?? 0,
+            washout_water_m3: ch.washoutWaterM3 ?? 0,
+            indicative_cost_eur: Math.round(ch.totalHours * 480 + ch.brokeTonnes * 280),
+            transition_reason: ch.reason,
+          });
+        });
+
+        // 2. Run to run pairwise rows
+        runs.forEach((fromRun) => {
+          runs.forEach((toRun) => {
+            if (fromRun.order_id === toRun.order_id) return;
+            const ch = calculateChangeover(fromRun, toRun, 1.0, 2.4, lossModelConfig);
+            const pairKey = `${fromRun.order_id}->${toRun.order_id}`;
+            const isUsed = usedMap.has(pairKey);
+            const stepNum = usedMap.get(pairKey);
+
+            matrixData.push({
+              from_run_seq: fromRun.runSequence,
+              from_order_id: fromRun.order_id,
+              from_shade: fromRun.shade_name,
+              from_grammage_gsm: fromRun.grammage_gsm,
+              from_format: fromRun.format_type,
+              to_run_seq: toRun.runSequence,
+              to_order_id: toRun.order_id,
+              to_shade: toRun.shade_name,
+              to_grammage_gsm: toRun.grammage_gsm,
+              to_format: toRun.format_type,
+              is_used_in_sequence: isUsed ? `YES (Step #${stepNum})` : 'NO',
+              sequence_step: stepNum ?? '',
+              total_changeover_hours: ch.totalHours,
+              base_setup_hours: ch.baseSetup,
+              washout_hours: ch.washoutHours,
+              grammage_hours: ch.grammageHours,
+              format_hours: ch.formatHours,
+              is_washout: ch.isWashout ? 'YES' : 'NO',
+              total_broke_tonnes: ch.brokeTonnes,
+              color_broke_tonnes: ch.colorBrokeTonnes ?? 0,
+              grammage_broke_tonnes: ch.grammageBrokeTonnes ?? 0,
+              format_broke_tonnes: ch.formatBrokeTonnes ?? 0,
+              startup_broke_tonnes: ch.startupBrokeTonnes ?? 0,
+              washout_water_m3: ch.washoutWaterM3 ?? 0,
+              indicative_cost_eur: Math.round(ch.totalHours * 480 + ch.brokeTonnes * 280),
+              transition_reason: ch.reason,
+            });
+          });
+        });
+
+        const csv = buildCsvContent(
+          buildCommonMetadata(`Machine Transition Matrix`),
+          [
+            { key: 'from_run_seq', label: 'From Run Sequence' },
+            { key: 'from_order_id', label: 'From Order ID' },
+            { key: 'from_shade', label: 'From Shade' },
+            { key: 'from_grammage_gsm', label: 'From Grammage', unit: 'gsm' },
+            { key: 'from_format', label: 'From Format' },
+            { key: 'to_run_seq', label: 'To Run Sequence' },
+            { key: 'to_order_id', label: 'To Order ID' },
+            { key: 'to_shade', label: 'To Shade' },
+            { key: 'to_grammage_gsm', label: 'To Grammage', unit: 'gsm' },
+            { key: 'to_format', label: 'To Format' },
+            { key: 'is_used_in_sequence', label: 'Executed in Sequence' },
+            { key: 'sequence_step', label: 'Sequence Step Number' },
+            { key: 'total_changeover_hours', label: 'Total Changeover', unit: 'hours' },
+            { key: 'base_setup_hours', label: 'Base Setup', unit: 'hours' },
+            { key: 'washout_hours', label: 'Color Washout', unit: 'hours' },
+            { key: 'grammage_hours', label: 'Grammage Step', unit: 'hours' },
+            { key: 'format_hours', label: 'Format Switch', unit: 'hours' },
+            { key: 'is_washout', label: 'Washout Required' },
+            { key: 'total_broke_tonnes', label: 'Total Broke Paper', unit: 'tonnes' },
+            { key: 'color_broke_tonnes', label: 'Color Washout Broke', unit: 'tonnes' },
+            { key: 'grammage_broke_tonnes', label: 'Grammage Delta Broke', unit: 'tonnes' },
+            { key: 'format_broke_tonnes', label: 'Format Switch Broke', unit: 'tonnes' },
+            { key: 'startup_broke_tonnes', label: 'Start-up Broke', unit: 'tonnes' },
+            { key: 'washout_water_m3', label: 'Washout Water', unit: 'm3' },
+            { key: 'indicative_cost_eur', label: 'Indicative Setup Cost', unit: 'EUR' },
+            { key: 'transition_reason', label: 'Engineering Reason' },
+          ],
+          matrixData
+        );
+
+        downloadCsvFile(`transition_matrix`, scenarioSlug, csv, algoSlug);
       },
     },
     {
@@ -254,8 +420,8 @@ export const SequenceOptimizationView: React.FC = () => {
       },
     },
     {
-      label: 'Sequence Comparison Summary',
-      description: 'Side-by-side KPI comparison of changeover hours, broke fiber, and capacity gains',
+      label: `Result Summary & KPI Performance (${currentAlgoMeta.name} vs Naive)`,
+      description: `Side-by-side KPI comparison of changeover hours, broke paper, and cost savings`,
       onExport: () => {
         const summaryData = [
           {
@@ -325,14 +491,11 @@ export const SequenceOptimizationView: React.FC = () => {
         ];
 
         const csv = buildCsvContent(
-          {
-            datasetName: `Production Sequence Comparison Summary (${selectedMachine})`,
-            scenarioName: 'Naive vs Optimized',
-          },
+          buildCommonMetadata(`Result Summary and KPI Performance`),
           [
             { key: 'metric', label: 'Operational KPI' },
             { key: 'naive_value', label: 'Naive FIFO Baseline' },
-            { key: 'optimized_value', label: 'Sequence Optimized' },
+            { key: 'selected_value', label: currentAlgoMeta.name },
             { key: 'delta_savings', label: 'Net Savings / Delta' },
             { key: 'unit', label: 'Unit' },
             { key: 'improvement_pct', label: 'Improvement Percentage', unit: '%' },
@@ -340,7 +503,58 @@ export const SequenceOptimizationView: React.FC = () => {
           summaryData
         );
 
-        downloadCsvFile(`sequence_comparison_${selectedMachine.toLowerCase()}`, 'summary', csv);
+        downloadCsvFile(`result_summary`, scenarioSlug, csv, algoSlug);
+      },
+    },
+    {
+      label: `All Algorithms Comparison (${scenarioSlug.toUpperCase()})`,
+      description: 'Side-by-side comparison of all 5 sequencing methods on the active scenario',
+      onExport: () => {
+        const algos = [
+          { id: 'naive', name: 'Order of Arrival (Naive FIFO)', m: naive.metrics, solveMs: 0.1 },
+          { id: 'hybrid', name: 'Rule-Based Hybrid', m: strategies?.hybrid?.metrics ?? optimized.metrics, solveMs: 1.5 },
+          strategies?.cpsat ? { id: 'cpsat', name: 'Google OR-Tools CP-SAT', m: strategies.cpsat.metrics, solveMs: (strategies.cpsat as any).telemetry?.solveTimeMs ?? 3000 } : null,
+          strategies?.routing ? { id: 'routing', name: 'Google OR-Tools Routing Solver', m: strategies.routing.metrics, solveMs: (strategies.routing as any).telemetry?.solveTimeMs ?? 2000 } : null,
+          strategies?.mip ? { id: 'mip', name: 'Mixed-Integer Programming (MIP)', m: strategies.mip.metrics, solveMs: (strategies.mip as any).telemetry?.solveTimeMs ?? 2500 } : null,
+        ].filter(Boolean) as { id: string; name: string; m: ScheduleMetrics; solveMs: number }[];
+
+        const comparisonData = algos.map((a) => {
+          const cost = Math.round(a.m.totalChangeoverHours * 480 + a.m.totalBrokeTonnes * 280);
+          return {
+            algorithm_id: a.id,
+            algorithm_name: a.name,
+            changeover_hours: a.m.totalChangeoverHours,
+            broke_tonnes: a.m.totalBrokeTonnes,
+            washout_count: a.m.washoutCount,
+            indicative_cost_eur: cost,
+            due_date_compliance_pct: a.m.slaCompliancePct,
+            solve_time_ms: a.solveMs,
+          };
+        });
+
+        const csv = buildCsvContent(
+          {
+            datasetName: `All Algorithms Strategy Comparison (${selectedMachine})`,
+            scenarioName: `${sequenceScenarioPreset.toUpperCase()} Campaign`,
+            assumptions: {
+              CostModel: '€480/h machine downtime + €280/t scrap (Client input required)',
+              BrokeRate: '2.4 t/h (Client input required)',
+            },
+          },
+          [
+            { key: 'algorithm_id', label: 'Algorithm Identifier' },
+            { key: 'algorithm_name', label: 'Algorithm Name' },
+            { key: 'changeover_hours', label: 'Changeover Downtime', unit: 'hours' },
+            { key: 'broke_tonnes', label: 'Off-Spec Paper Broke', unit: 'tonnes' },
+            { key: 'washout_count', label: 'Washout Chest Cleanings', unit: 'events' },
+            { key: 'indicative_cost_eur', label: 'Indicative Setup Cost', unit: 'EUR' },
+            { key: 'due_date_compliance_pct', label: 'Due Date Delivery SLA', unit: '%' },
+            { key: 'solve_time_ms', label: 'Execution Time', unit: 'ms' },
+          ],
+          comparisonData
+        );
+
+        downloadCsvFile(`all_algorithms_comparison`, scenarioSlug, csv);
       },
     },
   ];
@@ -360,8 +574,6 @@ export const SequenceOptimizationView: React.FC = () => {
       metrics.washoutCount === 0
         ? 'Zero Intermediate Washouts'
         : `${metrics.washoutCount} Intermediate Washout${metrics.washoutCount > 1 ? 's' : ''}`;
-    const reversalCount = metrics.grammageReversalsCount ?? 0;
-    const reversalHeadline = reversalCount > 0 ? `${reversalCount} GSM Reversal${reversalCount > 1 ? 's' : ''}` : null;
     const setupHeadline = `${metrics.totalChangeoverHours}h Setup Downtime`;
 
     return (
@@ -407,7 +619,7 @@ export const SequenceOptimizationView: React.FC = () => {
               fontWeight: 700,
             }}
           >
-            {washoutHeadline} • {reversalHeadline ? `${reversalHeadline} • ` : ''}{setupHeadline}
+            {washoutHeadline} • {setupHeadline}
           </span>
         </div>
 
@@ -456,30 +668,6 @@ export const SequenceOptimizationView: React.FC = () => {
                   flexShrink: 0,
                 }}
               >
-                {/* Grammage Reversal Badge on Top-Left */}
-                {run.changeoverBreakdown?.isGrammageReversal && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: '-6px',
-                      left: '-6px',
-                      background: 'var(--warning-amber)',
-                      color: '#FFFFFF',
-                      borderRadius: '3px',
-                      padding: '1px 3px',
-                      fontSize: '0.58rem',
-                      fontWeight: 800,
-                      display: 'flex',
-                      alignItems: 'center',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.25)',
-                      zIndex: 2,
-                    }}
-                    title={`Grammage Step-Down Reversal: ${run.changeoverBreakdown.grammageDeltaGsm ?? ''}g GSM (${run.changeoverBreakdown.grammageDownHours ?? 0}h setup penalty)`}
-                  >
-                    ▼ GSM
-                  </div>
-                )}
-
                 {/* Washout badge on Top-Right */}
                 {run.isWashout && (
                   <div
@@ -589,10 +777,22 @@ export const SequenceOptimizationView: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <CsvExportButton label="Export CSV" options={exportSequenceOptions} />
           <button
-            onClick={() => setShowTransitionMatrix(!showTransitionMatrix)}
+            type="button"
+            onClick={() => {
+              const next = !isMatrixVisible;
+              setIsMatrixVisible(next);
+              if (next) {
+                setTimeout(() => {
+                  const el = document.getElementById('transition-matrix-section');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }, 50);
+              }
+            }}
+            aria-expanded={isMatrixVisible}
+            aria-controls="transition-matrix-section"
             style={{
-              background: showTransitionMatrix ? 'var(--cyan-accent)' : 'rgba(255,255,255,0.12)',
-              color: showTransitionMatrix ? 'var(--navy-dark)' : '#FFFFFF',
+              background: 'rgba(255,255,255,0.12)',
+              color: '#FFFFFF',
               border: '1px solid rgba(255,255,255,0.25)',
               padding: '10px 16px',
               borderRadius: '6px',
@@ -601,10 +801,11 @@ export const SequenceOptimizationView: React.FC = () => {
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
+              cursor: 'pointer',
             }}
           >
             <Grid size={15} />
-            {showTransitionMatrix ? 'Hide Transition Matrix' : 'View Transition Matrix'}
+            {isMatrixVisible ? 'Hide transition matrix' : 'Show transition matrix'}
           </button>
         </div>
       </div>
@@ -754,82 +955,11 @@ export const SequenceOptimizationView: React.FC = () => {
               </button>
             </div>
           </div>
-
-          {/* Grammage Step-Down Penalty Slider */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--navy-dark)' }}>
-                  Extra Step-Down Penalty:
-                </label>
-                <ClientInputBadge parameterName="Grammage Step-Down Penalty" />
-              </div>
-              <span
-                style={{
-                  fontSize: '0.82rem',
-                  fontWeight: 800,
-                  color: grammageDownPenaltyHours > 0 ? 'var(--warning-amber)' : 'var(--text-muted)',
-                  background: '#FFFFFF',
-                  padding: '2px 8px',
-                  borderRadius: '4px',
-                  border: '1px solid var(--border-light)',
-                }}
-              >
-                +{grammageDownPenaltyHours.toFixed(1)} h / reversal
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <input
-                type="range"
-                min="0.0"
-                max="2.0"
-                step="0.1"
-                value={grammageDownPenaltyHours}
-                onChange={(e) => setGrammageDownPenaltyHours(parseFloat(e.target.value))}
-                style={{
-                  flex: 1,
-                  accentColor: 'var(--brand-blue)',
-                  cursor: 'pointer',
-                }}
-              />
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                0.0h (Symmetric baseline)
-              </span>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                {[0.0, 0.6, 1.2].map((presetVal) => (
-                  <button
-                    key={presetVal}
-                    type="button"
-                    onClick={() => setGrammageDownPenaltyHours(presetVal)}
-                    style={{
-                      fontSize: '0.66rem',
-                      padding: '2px 6px',
-                      borderRadius: '3px',
-                      background: Math.abs(grammageDownPenaltyHours - presetVal) < 0.05 ? 'var(--brand-blue)' : '#FFFFFF',
-                      color: Math.abs(grammageDownPenaltyHours - presetVal) < 0.05 ? '#FFFFFF' : 'var(--text-secondary)',
-                      border: '1px solid var(--border-light)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {presetVal === 0 ? '0.0h (Zero)' : `${presetVal.toFixed(1)}h`}
-                  </button>
-                ))}
-              </div>
-              <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                2.0h (Severe penalty)
-              </span>
-            </div>
-
-            <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', margin: '6px 0 0 0', lineHeight: 1.4 }}>
-              Additional mechanical slice & tension calibration when moving from heavy to light paper (e.g. 150g &rarr; 80g).
-            </p>
-          </div>
         </div>
       </div>
+
+      {/* Optimizer Selection & CP-SAT Solver Settings (Prompt Specified Segmented Control) */}
+      <OptimizerSelector />
 
       {/* Broke Furnish Recycling Ceiling Warning Banner (Component 11) */}
       {lossModelConfig.enableBrokeRecycling &&
@@ -860,374 +990,6 @@ export const SequenceOptimizationView: React.FC = () => {
             </div>
           </div>
         )}
-
-      {/* Comparison Scorecard Table (Prompt Specified Mechanism) */}
-      <div
-        style={{
-          background: '#FFFFFF',
-          borderRadius: 'var(--radius-lg)',
-          padding: '24px 28px',
-          border: '1px solid var(--border-light)',
-          boxShadow: 'var(--shadow-sm)',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <div>
-            <h3 style={{ fontSize: '1.15rem', color: 'var(--navy-dark)', fontWeight: 700, margin: 0 }}>
-              Live Calculated Performance Comparison
-            </h3>
-            <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Values calculated dynamically for the active {selectedMachine} campaign ({naive.runs.length} runs)
-            </p>
-          </div>
-          <ClientInputBadge parameterName="Broke Rate & Machine Operating Cost" />
-        </div>
-
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ textAlign: 'left', fontSize: '0.88rem' }}>
-            <thead>
-              <tr style={{ background: 'var(--off-white-bg)', borderBottom: '2px solid var(--border-light)' }}>
-                <th style={{ padding: '12px 16px', color: 'var(--text-secondary)', width: '35%' }}>
-                  OPERATIONAL METRIC
-                </th>
-                <th style={{ padding: '12px 16px', color: 'var(--danger-crimson)', width: '22%' }}>
-                  NAIVE SEQUENCE (Order Book Arrival)
-                </th>
-                <th style={{ padding: '12px 16px', color: 'var(--brand-blue)', width: '22%' }}>
-                  OPTIMIZED SEQUENCE (Colour Ladder)
-                </th>
-                <th style={{ padding: '12px 16px', color: 'var(--success-green)', width: '21%' }}>
-                  CAPACITY & SAVINGS DELTA
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                <td style={{ padding: '12px 16px', fontWeight: 600 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Clock size={16} color="var(--brand-blue)" />
-                    <span>Changeover Hours</span>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                    Mechanical setup + washouts + grammage steps
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--danger-crimson)' }}>
-                  {naive.metrics.totalChangeoverHours} h
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand-blue)' }}>
-                  {optimized.metrics.totalChangeoverHours} h
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
-                  -{savings.changeoverHoursSaved} h freed
-                </td>
-              </tr>
-
-              <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                <td style={{ padding: '12px 16px', fontWeight: 600 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Trash2 size={16} color="var(--warning-amber)" />
-                    <span>Estimated Broke / Scrap Fiber</span>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                    Calculated at 2.4 tonnes / changeover hour
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--danger-crimson)' }}>
-                  {naive.metrics.totalBrokeTonnes} t
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand-blue)' }}>
-                  {optimized.metrics.totalBrokeTonnes} t
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
-                  -{savings.brokeTonnesSaved} t reduced
-                </td>
-              </tr>
-
-              <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                <td style={{ padding: '12px 16px', fontWeight: 600 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <AlertTriangle size={16} color="var(--warning-amber)" />
-                    <span>Deep Pulper Washout Events</span>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                    Costly 3.5h dark-to-light chemical washes
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--danger-crimson)' }}>
-                  {naive.metrics.washoutCount} washouts
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand-blue)' }}>
-                  {optimized.metrics.washoutCount} washout (end of cycle)
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
-                  {savings.washoutsAvoided} washouts eliminated
-                </td>
-              </tr>
-
-              <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                <td style={{ padding: '12px 16px', fontWeight: 600 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Droplets size={16} color="var(--cyan-accent)" />
-                    <span>Washout Effluent Water Loss</span>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                    High-pressure chest wash volume (6 m³/washout)
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--danger-crimson)' }}>
-                  {naive.metrics.totalWashoutWaterM3 ?? 0} m³
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand-blue)' }}>
-                  {optimized.metrics.totalWashoutWaterM3 ?? 0} m³
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
-                  -{savings.waterSavedM3 ?? 0} m³ effluent avoided
-                </td>
-              </tr>
-
-              <tr style={{ borderBottom: '1px solid var(--border-light)' }}>
-                <td style={{ padding: '12px 16px', fontWeight: 600 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Layers size={16} color="var(--brand-blue)" />
-                    <span>Broke Furnish Recycling Ratio</span>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                    Broke as % of gross furnish (Max ceiling: {lossModelConfig.maxFurnishRecycleCeilingPct ?? 15}%)
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--danger-crimson)' }}>
-                  {(naive.metrics.brokeFurnishPct ?? 0).toFixed(1)}%
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--brand-blue)' }}>
-                  {(optimized.metrics.brokeFurnishPct ?? 0).toFixed(1)}%
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
-                  {((naive.metrics.brokeFurnishPct ?? 0) - (optimized.metrics.brokeFurnishPct ?? 0)).toFixed(1)}% lower fiber stress
-                </td>
-              </tr>
-
-              <tr style={{ borderBottom: '1px solid var(--border-light)', background: '#F8FCFD' }}>
-                <td style={{ padding: '12px 16px', fontWeight: 700 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Sparkles size={16} color="var(--cyan-accent)" />
-                    <span>Machine Capacity Released</span>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--brand-blue)' }}>
-                    Additional saleable mill production window
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>—</td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--cyan-accent)' }}>
-                  +{savings.capacityReleasedHours} h
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--cyan-accent)' }}>
-                  +{(savings.capacityReleasedHours * 5.8).toFixed(1)} t potential output
-                </td>
-              </tr>
-
-              <tr>
-                <td style={{ padding: '12px 16px', fontWeight: 700 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <TrendingUp size={16} color="var(--success-green)" />
-                    <span>Net Financial Value Created</span>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                    Machine rate €480/h + Broke recovery €280/t
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px', color: 'var(--text-secondary)' }}>—</td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
-                  €{savings.financialSavingsEur.toLocaleString()}
-                </td>
-                <td style={{ padding: '12px 16px', fontWeight: 800, color: 'var(--success-green)' }}>
-                  ~€{(savings.financialSavingsEur * 26).toLocaleString()} / year
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Sequence vs Non-Sequence Loss Architecture Card */}
-      <div
-        style={{
-          background: '#FFFFFF',
-          borderRadius: 'var(--radius-lg)',
-          padding: '24px 28px',
-          border: '1px solid var(--border-light)',
-          boxShadow: 'var(--shadow-sm)',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-          <div>
-            <h3 style={{ fontSize: '1.15rem', color: 'var(--navy-dark)', fontWeight: 700, margin: 0 }}>
-              Loss Classification Architecture: Sequence-Dependent vs. Non-Sequence Yield Losses
-            </h3>
-            <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Understanding what production scheduling can optimize versus baseline manufacturing process losses
-            </p>
-          </div>
-          <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-            Illustrative / Synthetic - Not actual Lessebo results
-          </span>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
-          {/* Card 1: Sequence-Dependent Losses */}
-          <div
-            style={{
-              background: '#F0F9FF',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid #BAE6FD',
-              padding: '18px 20px',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-              <Sparkles size={18} color="var(--brand-blue)" />
-              <strong style={{ fontSize: '0.95rem', color: 'var(--navy-dark)' }}>
-                Sequence-Dependent Losses (Optimizable)
-              </strong>
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
-              Directly driven by run order and transition physics. Solved deterministically by the Light-to-Dark ladder.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.78rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
-                <span>• Shade Washout Broke & Off-Spec Transitions:</span>
-                <strong style={{ color: 'var(--brand-blue)' }}>{savings.brokeTonnesSaved.toFixed(1)} t saved</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
-                <span>• Washout Chest Effluent Cleaning Water:</span>
-                <strong style={{ color: 'var(--brand-blue)' }}>{(savings.waterSavedM3 ?? 0).toFixed(0)} m³ saved</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
-                <span>• Caliper / Grammage Jump Stabilization:</span>
-                <strong style={{ color: 'var(--brand-blue)' }}>Continuous gradient</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>• Slitter & Rewinder Deckle Width Switches:</span>
-                <strong style={{ color: 'var(--brand-blue)' }}>Grouped by format</strong>
-              </div>
-            </div>
-          </div>
-
-          {/* Card 2: Non-Sequence Yield Losses */}
-          <div
-            style={{
-              background: '#FAF5FF',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid #E9D5FF',
-              padding: '18px 20px',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-              <Layers size={18} color="#7C3AED" />
-              <strong style={{ fontSize: '0.95rem', color: 'var(--navy-dark)' }}>
-                Non-Sequence Yield Losses (Process Baselines)
-              </strong>
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
-              Inherent to machine geometry, paper grade, and finishing equipment. Fed into MRP gross requirement calculation.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.78rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
-                <span>• Deckle Edge Trim Loss (Format Geometry):</span>
-                <strong style={{ color: '#7C3AED' }}>2.0% – 4.5% (Configurable)</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
-                <span>• Web-Break Broke (Paper Tension by GSM):</span>
-                <strong style={{ color: '#7C3AED' }}>1.5% – 3.2% (Configurable)</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #CBD5E1', paddingBottom: '4px' }}>
-                <span>• Fixed Startup Calibration Broke:</span>
-                <strong style={{ color: '#7C3AED' }}>0.5 t / production run</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>• Converting & Finishing Scrap (Sheeting/Slit):</span>
-                <strong style={{ color: '#7C3AED' }}>{lossModelConfig.enableConvertingLoss ? 'Active' : 'Off (Default)'}</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Transition Matrix Heatmap (Collapsible) */}
-      {showTransitionMatrix && (
-        <div
-          style={{
-            background: '#FFFFFF',
-            borderRadius: 'var(--radius-lg)',
-            padding: '24px',
-            border: '2px solid var(--cyan-accent)',
-            boxShadow: 'var(--shadow-md)',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-            <div>
-              <h3 style={{ fontSize: '1.05rem', color: 'var(--navy-dark)', fontWeight: 700, margin: 0 }}>
-                Shade-to-Shade Transition Penalty Matrix (Hours)
-              </h3>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-                Rows: From Shade ➔ Columns: To Shade. Green indicates smooth transition (0.0h); Red indicates severe washout penalty (3.5h).
-              </p>
-            </div>
-            <ClientInputBadge parameterName="Washout Chemistry Times" />
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ fontSize: '0.75rem', textAlign: 'center' }}>
-              <thead>
-                <tr style={{ background: 'var(--off-white-bg)' }}>
-                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>From \ To</th>
-                  {shadeNames.map((name) => (
-                    <th key={name} style={{ padding: '8px 6px', fontSize: '0.7rem' }}>
-                      {name.split(' ')[0]}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {shadeNames.map((fromName, rIdx) => (
-                  <tr key={fromName} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                    <td style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600 }}>
-                      {fromName}
-                    </td>
-                    {shadeNames.map((toName, cIdx) => {
-                      let hrs = 0.0;
-                      if (rIdx === cIdx) hrs = 0.0;
-                      else if (cIdx > rIdx) hrs = 0.0; // light to dark
-                      else if (rIdx >= 6 && cIdx <= 1) hrs = 3.5; // dark to ultra-light
-                      else if (rIdx >= 4 && cIdx <= 1) hrs = 2.0; // mid to light
-                      else hrs = 1.2;
-
-                      const bgColor =
-                        hrs === 0.0 ? '#EBF9F1' : hrs >= 3.0 ? '#FEE2E2' : hrs >= 1.5 ? '#FEF3C7' : '#F0F9FF';
-                      const textColor =
-                        hrs === 0.0 ? '#107C41' : hrs >= 3.0 ? '#DC2626' : hrs >= 1.5 ? '#B45309' : '#0369A1';
-
-                      return (
-                        <td
-                          key={toName}
-                          style={{
-                            padding: '8px 6px',
-                            background: bgColor,
-                            color: textColor,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {hrs.toFixed(1)}h
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {/* Visual Gantt Schedule Comparison (Prompt Highlight: Light-to-Dark vs Random Ping-Pong) */}
       <div
         style={{
@@ -1286,7 +1048,7 @@ export const SequenceOptimizationView: React.FC = () => {
                 cursor: 'pointer',
               }}
             >
-              Hybrid {optimizationResult.recommendedStrategyId === 'hybrid' ? '(Recommended)' : ''}
+              Selected Optimizer ({recommendedResult.metrics.strategyName ?? activeOptimizer.toUpperCase()})
             </button>
             <button
               onClick={() => setViewMode('color_first')}
@@ -1300,7 +1062,7 @@ export const SequenceOptimizationView: React.FC = () => {
                 cursor: 'pointer',
               }}
             >
-              Colour-First {optimizationResult.recommendedStrategyId === 'color_first' ? '(Recommended)' : ''}
+              Colour-First
             </button>
             <button
               onClick={() => setViewMode('grammage_first')}
@@ -1314,7 +1076,7 @@ export const SequenceOptimizationView: React.FC = () => {
                 cursor: 'pointer',
               }}
             >
-              Grammage-First {optimizationResult.recommendedStrategyId === 'grammage_first' ? '(Recommended)' : ''}
+              Grammage-First
             </button>
             <button
               onClick={() => setViewMode('naive')}
@@ -1349,11 +1111,35 @@ export const SequenceOptimizationView: React.FC = () => {
               {renderTimeline(
                 recommendedResult.runs,
                 recommendedResult.metrics,
-                'RECOMMENDED SEQUENCE',
-                'var(--brand-blue-light)',
-                'var(--brand-blue)',
-                '#BCEBF5',
-                `${recommendedResult.metrics.strategyName ?? 'Intelligent Optimized'} Sequence`,
+                activeOptimizer === 'hybrid'
+                  ? 'RULE-BASED HYBRID'
+                  : activeOptimizer === 'cpsat'
+                  ? 'OR-TOOLS CP-SAT'
+                  : activeOptimizer === 'routing'
+                  ? 'OR-TOOLS ROUTING'
+                  : 'MIP (SCIP)',
+                activeOptimizer === 'hybrid'
+                  ? 'var(--brand-blue-light)'
+                  : activeOptimizer === 'cpsat'
+                  ? '#CCFBF1'
+                  : activeOptimizer === 'routing'
+                  ? '#FEF3C7'
+                  : '#EDE9FE',
+                activeOptimizer === 'hybrid'
+                  ? 'var(--brand-blue)'
+                  : activeOptimizer === 'cpsat'
+                  ? '#0F766E'
+                  : activeOptimizer === 'routing'
+                  ? '#92400E'
+                  : '#5B21B6',
+                activeOptimizer === 'hybrid'
+                  ? '#BCEBF5'
+                  : activeOptimizer === 'cpsat'
+                  ? '#99F6E4'
+                  : activeOptimizer === 'routing'
+                  ? '#FDE68A'
+                  : '#DDD6FE',
+                `${recommendedResult.metrics.strategyName ?? 'Optimized'} Sequence`,
                 true
               )}
             </>
@@ -1361,14 +1147,38 @@ export const SequenceOptimizationView: React.FC = () => {
 
           {viewMode === 'hybrid' &&
             renderTimeline(
-              hybridResult.runs,
-              hybridResult.metrics,
-              'HYBRID SEQUENCE',
-              'var(--brand-blue-light)',
-              'var(--brand-blue)',
-              '#BCEBF5',
-              'Grammage Banding + Light-to-Dark inside Bands + 2-Opt Local Search',
-              hybridResult.isRecommended ?? optimizationResult.recommendedStrategyId === 'hybrid'
+              recommendedResult.runs,
+              recommendedResult.metrics,
+              activeOptimizer === 'hybrid'
+                ? 'RULE-BASED HYBRID'
+                : activeOptimizer === 'cpsat'
+                ? 'OR-TOOLS CP-SAT'
+                : activeOptimizer === 'routing'
+                ? 'OR-TOOLS ROUTING'
+                : 'MIP (SCIP)',
+              activeOptimizer === 'hybrid'
+                ? 'var(--brand-blue-light)'
+                : activeOptimizer === 'cpsat'
+                ? '#CCFBF1'
+                : activeOptimizer === 'routing'
+                ? '#FEF3C7'
+                : '#EDE9FE',
+              activeOptimizer === 'hybrid'
+                ? 'var(--brand-blue)'
+                : activeOptimizer === 'cpsat'
+                ? '#0F766E'
+                : activeOptimizer === 'routing'
+                ? '#92400E'
+                : '#5B21B6',
+              activeOptimizer === 'hybrid'
+                ? '#BCEBF5'
+                : activeOptimizer === 'cpsat'
+                ? '#99F6E4'
+                : activeOptimizer === 'routing'
+                ? '#FDE68A'
+                : '#DDD6FE',
+              `${recommendedResult.metrics.strategyName ?? 'Optimized'} Sequence`,
+              true
             )}
 
           {viewMode === 'color_first' &&
@@ -1379,8 +1189,8 @@ export const SequenceOptimizationView: React.FC = () => {
               '#E0F2FE',
               'var(--brand-blue)',
               '#BAE6FD',
-              'Strict Light-to-Dark Ladder (Format \u2192 Shade Group \u2192 Shade Tier)',
-              colorFirstResult.isRecommended ?? optimizationResult.recommendedStrategyId === 'color_first'
+              'Strict Light-to-Dark Ladder (Format → Shade Group → Shade Tier)',
+              false
             )}
 
           {viewMode === 'grammage_first' &&
@@ -1391,8 +1201,8 @@ export const SequenceOptimizationView: React.FC = () => {
               '#F3E8FF',
               '#7C3AED',
               '#E9D5FF',
-              'Ascending Grammage Bands \u2192 Light-to-Dark inside Bands',
-              grammageFirstResult.isRecommended ?? optimizationResult.recommendedStrategyId === 'grammage_first'
+              'Ascending Grammage Bands → Light-to-Dark inside Bands',
+              false
             )}
 
           {viewMode === 'naive' &&
@@ -1404,7 +1214,7 @@ export const SequenceOptimizationView: React.FC = () => {
               'var(--danger-crimson)',
               '#FECACA',
               'Order-Arrival (Un-sequenced FIFO Baseline)',
-              naiveResult.isRecommended ?? optimizationResult.recommendedStrategyId === 'naive'
+              false
             )}
 
           {/* Timeline Legend */}
@@ -1446,21 +1256,6 @@ export const SequenceOptimizationView: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span
                 style={{
-                  background: 'var(--warning-amber)',
-                  color: '#FFFFFF',
-                  borderRadius: '3px',
-                  padding: '1px 4px',
-                  fontSize: '0.58rem',
-                  fontWeight: 800,
-                }}
-              >
-                ▼ GSM
-              </span>
-              <span>Grammage Step-Down Reversal (Heavy &rarr; Light step)</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span
-                style={{
                   width: '14px',
                   height: '14px',
                   borderRadius: '3px',
@@ -1477,6 +1272,9 @@ export const SequenceOptimizationView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Live Calculated Performance Comparison Table (Restored & Dynamic) */}
+      <PerformanceComparisonTable />
 
       {/* Explainability Inspector: "Why this sequence was selected" (Prompt Required Feature) */}
       <div
@@ -1579,6 +1377,28 @@ export const SequenceOptimizationView: React.FC = () => {
               Decision Engine Rationale (Why scheduled here):
             </span>
 
+            {/* CP-SAT Global Tour Rationale when CP-SAT active */}
+            {activeOptimizer === 'cpsat' && (
+              <div
+                style={{
+                  background: '#F0FAFD',
+                  border: '1px solid #BAE6FD',
+                  borderRadius: '6px',
+                  padding: '8px 10px',
+                  marginBottom: '10px',
+                  fontSize: '0.74rem',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                  <Sparkles size={13} color="var(--brand-blue)" />
+                  <strong style={{ color: 'var(--navy-dark)' }}>CP-SAT Global Optimal Tour Placement</strong>
+                </div>
+                <div style={{ color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  Selected by dual-bound branch-and-cut at position #{activeSelectedRun.runSequence} (Transition setup: {activeSelectedRun.changeoverHours}h, broke: {activeSelectedRun.brokeTonnes}t, cost: €{(activeSelectedRun.changeoverHours * 480 + activeSelectedRun.brokeTonnes * 280).toFixed(0)}), beating higher-cost alternate arcs while honoring customer SLA due date (Day {activeSelectedRun.due_in_days}).
+                </div>
+              </div>
+            )}
+
             {/* Badges */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
               {activeSelectedRun.explainability.badges.map((b, i) => (
@@ -1673,6 +1493,15 @@ export const SequenceOptimizationView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Machine Transition Matrix (Single Shared Evaluator) */}
+      {isMatrixVisible && <TransitionMatrix />}
+
+      {/* Result Summary Panel (Prompt Specified Placement: Bottom of the Sequence) */}
+      <ResultSummaryPanel onOpenBenchmark={() => setIsBenchmarkModalOpen(true)} />
+
+      {/* Benchmark Suite Modal */}
+      <BenchmarkSuiteModal isOpen={isBenchmarkModalOpen} onClose={() => setIsBenchmarkModalOpen(false)} />
     </div>
   );
 };

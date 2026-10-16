@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "npx -y vite-node tests/csvExportAndScenario.test.ts && npx -y vite-node tests/conflictScenarioAndStrategies.test.ts",
+    "test": "npx -y vite-node tests/csvExportAndScenario.test.ts && npx -y vite-node tests/conflictScenarioAndStrategies.test.ts && npx -y vite-node tests/cpsatModelAndParity.test.ts && npx -y vite-node tests/benchmarkHarness.test.ts && npx -y vite-node tests/resultSummaryAndTransitionMatrix.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

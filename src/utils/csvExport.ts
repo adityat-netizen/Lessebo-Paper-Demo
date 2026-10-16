@@ -24,6 +24,14 @@ export interface CsvMetadata {
   assumptions?: Record<string, string | number>;
   filtersApplied?: Record<string, string>;
   additionalNotes?: string[];
+  solverStatus?: string;
+  provenLowerBound?: number | string;
+  optimalityGap?: number | string;
+  timeoutSeconds?: number | string;
+  seed?: number | string;
+  fallbackNote?: string;
+  selectedAlgorithm?: string;
+  comparedAlgorithm?: string;
 }
 
 /**
@@ -74,6 +82,34 @@ export function buildCsvContent<T extends Record<string, any>>(
   }
   metaLines.push(`# Notice: Illustrative / Synthetic - Not actual Lessebo results`);
   metaLines.push(`# Source System: Tatras Data Industrial Intelligence Engine`);
+
+  if (metadata.selectedAlgorithm) {
+    metaLines.push(`# Selected Algorithm: ${metadata.selectedAlgorithm}`);
+  }
+  if (metadata.comparedAlgorithm) {
+    metaLines.push(`# Compared Baseline: ${metadata.comparedAlgorithm}`);
+  }
+  if (metadata.solverStatus) {
+    metaLines.push(`# Solver Status: ${metadata.solverStatus}`);
+  }
+  if (metadata.provenLowerBound !== undefined) {
+    metaLines.push(`# Proven Lower Bound: ${metadata.provenLowerBound}`);
+  }
+  if (metadata.optimalityGap !== undefined) {
+    const gapStr = typeof metadata.optimalityGap === 'number'
+      ? `${(metadata.optimalityGap * 100).toFixed(1)}%`
+      : String(metadata.optimalityGap);
+    metaLines.push(`# Optimality Gap: ${gapStr}`);
+  }
+  if (metadata.timeoutSeconds !== undefined) {
+    metaLines.push(`# Timeout Limit: ${metadata.timeoutSeconds}s`);
+  }
+  if (metadata.seed !== undefined) {
+    metaLines.push(`# Solver Seed: ${metadata.seed}`);
+  }
+  if (metadata.fallbackNote) {
+    metaLines.push(`# Fallback Note: ${metadata.fallbackNote}`);
+  }
 
   if (metadata.assumptions && Object.keys(metadata.assumptions).length > 0) {
     const asmpStr = Object.entries(metadata.assumptions)
@@ -139,12 +175,15 @@ export function buildCsvContent<T extends Record<string, any>>(
 export function downloadCsvFile(
   datasetSlug: string,
   scenarioSlug: string = 'baseline',
-  csvContent: string
+  csvContent: string,
+  algorithmSlug?: string
 ): void {
   const cleanDataset = datasetSlug.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
   const cleanScenario = scenarioSlug.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
   const timestamp = formatFilenameTimestamp();
-  const filename = `lessebo_${cleanDataset}_${cleanScenario}_synthetic_${timestamp}.csv`;
+  const filename = algorithmSlug
+    ? `lessebo_${cleanDataset}_${algorithmSlug.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}_${cleanScenario}_synthetic_${timestamp}.csv`
+    : `lessebo_${cleanDataset}_${cleanScenario}_synthetic_${timestamp}.csv`;
 
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);

@@ -73,9 +73,9 @@ export function calculateChangeover(
     reasons.push(`Light wash: ${fromRun.shade_name} to ${toRun.shade_name}`);
   }
 
-  // 2. Grammage Delta Penalty (Direction-Aware)
+  // 2. Grammage Delta Penalty (Symmetric: step-up and step-down cost identical)
   const grammageDelta = Math.abs(fromRun.grammage_gsm - toRun.grammage_gsm);
-  const isGrammageReversal = fromRun.grammage_gsm > toRun.grammage_gsm;
+  const isGrammageReversal = false; // Asymmetric direction penalty removed
   const grammageDirection: 'up' | 'down' | 'same' =
     fromRun.grammage_gsm > toRun.grammage_gsm
       ? 'down'
@@ -88,29 +88,16 @@ export function calculateChangeover(
     baseGrammageHours = 0.0;
   } else if (grammageDelta <= 40) {
     baseGrammageHours = 0.5;
-    reasons.push(`Caliper step: ${fromRun.grammage_gsm}g to ${toRun.grammage_gsm}g (small ${isGrammageReversal ? '-' : '+'}${grammageDelta}gsm)`);
+    reasons.push(`Caliper step: ${fromRun.grammage_gsm}g to ${toRun.grammage_gsm}g (Δ${grammageDelta}gsm)`);
   } else {
     baseGrammageHours = 1.2;
-    reasons.push(`Caliper jump: ${fromRun.grammage_gsm}g to ${toRun.grammage_gsm}g (large delta ${grammageDelta}gsm)`);
+    reasons.push(`Caliper jump: ${fromRun.grammage_gsm}g to ${toRun.grammage_gsm}g (large Δ${grammageDelta}gsm)`);
   }
 
-  // Directional extra penalty: step-down heavy to light requires calender nip release & steam curve restabilization
-  const stepDownPenalty = config?.grammageStepDownPenaltyHours ?? 0.0;
-  const largeJumpThreshold = config?.grammageLargeJumpThresholdGsm ?? 40;
-  const largeJumpPenalty = config?.grammageLargeJumpPenaltyHours ?? 0.0;
-  const extraDownPenalty = isGrammageReversal
-    ? stepDownPenalty + (grammageDelta > largeJumpThreshold ? largeJumpPenalty : 0)
-    : 0.0;
-
-  if (isGrammageReversal && extraDownPenalty > 0) {
-    reasons.push(
-      `Heavy-to-light step (${fromRun.grammage_gsm}g ➔ ${toRun.grammage_gsm}g): +${Math.round(extraDownPenalty * 100) / 100}h calender reset [Client input required]`
-    );
-  }
-
-  const grammageHours = Math.round((baseGrammageHours + extraDownPenalty) * 100) / 100;
+  // Symmetric transition: no directional penalty
+  const grammageHours = baseGrammageHours;
   const grammageUpHours = grammageDirection === 'up' ? baseGrammageHours : 0.0;
-  const grammageDownHours = grammageDirection === 'down' ? grammageHours : 0.0;
+  const grammageDownHours = grammageDirection === 'down' ? baseGrammageHours : 0.0;
 
   // 3. Format Change Penalty
   let formatHours = 0.0;

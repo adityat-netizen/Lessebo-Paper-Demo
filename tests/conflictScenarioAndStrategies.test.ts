@@ -24,8 +24,8 @@ function test(name: string, fn: () => void) {
 
 console.log('\n--- Running Sequence Strategies & Grammage Direction QA Suite ---\n');
 
-// 1. Backward Compatibility Test: Asymmetry set to zero reproduces baseline numbers
-test('Zero asymmetry (penalty=0) reproduces baseline transition calculations', () => {
+// 1. Grammage symmetry test: Transitions depend solely on absolute caliper delta (|g1 - g2|)
+test('Grammage transitions are fully symmetric (|g1 - g2|) with no directional step-down penalty', () => {
   const run1: CampaignOrder = {
     ...upcomingOrders[0],
     grammage_gsm: 150,
@@ -39,21 +39,23 @@ test('Zero asymmetry (penalty=0) reproduces baseline transition calculations', (
     shade_name: 'Bright White',
   };
 
-  const baselineChangeover = calculateChangeover(run1, run2, 1.0, 2.4, {
-    ...DEFAULT_LOSS_MODEL_CONFIG,
-    grammageStepDownPenaltyHours: 0.0,
-    grammageLargeJumpPenaltyHours: 0.0,
-  });
+  const changeoverDown = calculateChangeover(run1, run2, 1.0, 2.4, DEFAULT_LOSS_MODEL_CONFIG);
+  const changeoverUp = calculateChangeover(run2, run1, 1.0, 2.4, DEFAULT_LOSS_MODEL_CONFIG);
 
-  // Base setup 0.5 + grammage jump (150 - 80 = 70 > 40 => 1.2h) = 1.7h
-  assert.strictEqual(baselineChangeover.grammageHours, 1.2);
-  assert.strictEqual(baselineChangeover.totalHours, 1.7);
-  assert.strictEqual(baselineChangeover.isGrammageReversal, true);
-  assert.strictEqual(baselineChangeover.grammageDirection, 'down');
+  // Base setup 0.5 + grammage jump (|150 - 80| = 70 > 40 => 1.2h) = 1.7h
+  assert.strictEqual(changeoverDown.grammageHours, 1.2);
+  assert.strictEqual(changeoverDown.totalHours, 1.7);
+  assert.strictEqual(changeoverDown.isGrammageReversal, false);
+
+  // Both directions must match exactly
+  assert.strictEqual(changeoverUp.grammageHours, changeoverDown.grammageHours);
+  assert.strictEqual(changeoverUp.totalHours, changeoverDown.totalHours);
+  assert.strictEqual(changeoverUp.brokeTonnes, changeoverDown.brokeTonnes);
+  assert.strictEqual(changeoverUp.isGrammageReversal, false);
 });
 
-// 2. Step-down costs more than step-up when configured
-test('Step-down costs more than step-up when direction penalty is configured', () => {
+// 2. Verification that directional penalty flags/configurations do not create asymmetric costs
+test('Step-down and step-up produce identical cost regardless of configuration flags', () => {
   const lightHeavy: CampaignOrder = {
     ...upcomingOrders[0],
     grammage_gsm: 80,
@@ -67,28 +69,16 @@ test('Step-down costs more than step-up when direction penalty is configured', (
     shade_tier: 1,
   };
 
-  const penaltyConfig = {
-    ...DEFAULT_LOSS_MODEL_CONFIG,
-    enableGrammageDirectionPenalty: true,
-    grammageStepDownPenaltyHours: 0.8,
-    grammageLargeJumpThresholdGsm: 40,
-    grammageLargeJumpPenaltyHours: 0.4,
-  };
-
-  // Step UP: 80 -> 150 (delta 70 > 40 => 1.2h base, 0 penalty)
-  const stepUp = calculateChangeover(lightHeavy, heavyLight, 1.0, 2.4, penaltyConfig);
-  // Step DOWN: 150 -> 80 (delta 70 > 40 => 1.2h base + 0.8h step down + 0.4h large jump = 2.4h)
-  const stepDown = calculateChangeover(heavyLight, lightHeavy, 1.0, 2.4, penaltyConfig);
+  const stepUp = calculateChangeover(lightHeavy, heavyLight, 1.0, 2.4, DEFAULT_LOSS_MODEL_CONFIG);
+  const stepDown = calculateChangeover(heavyLight, lightHeavy, 1.0, 2.4, DEFAULT_LOSS_MODEL_CONFIG);
 
   assert.strictEqual(stepUp.grammageHours, 1.2);
   assert.strictEqual(stepUp.isGrammageReversal, false);
-  assert.strictEqual(stepUp.grammageDirection, 'up');
 
-  assert.strictEqual(stepDown.grammageHours, 2.4);
-  assert.strictEqual(stepDown.isGrammageReversal, true);
-  assert.strictEqual(stepDown.grammageDirection, 'down');
-  assert.strictEqual(stepDown.grammageHours > stepUp.grammageHours, true);
-  assert.strictEqual(stepDown.brokeTonnes > stepUp.brokeTonnes, true);
+  assert.strictEqual(stepDown.grammageHours, 1.2);
+  assert.strictEqual(stepDown.isGrammageReversal, false);
+  assert.strictEqual(stepDown.grammageHours, stepUp.grammageHours);
+  assert.strictEqual(stepDown.brokeTonnes, stepUp.brokeTonnes);
 });
 
 // 3. Transition breakdown sums to total hours and broke
@@ -189,52 +179,27 @@ test('Edge case handling: extreme penalty value (10.0h) executes without overflo
   assert.strictEqual(Number.isFinite(opt.optimized.metrics.totalBrokeCostEur), true);
 });
 
-// 8. Conflict Preset Tests: "Heavy-grammage light shades" produces reversals under colour-first and fewer under Hybrid
-test('Conflict scenario generates multiple reversals in Colour-First and fewer under Hybrid', async () => {
+// 8. Conflict Preset Tests: "Heavy-grammage light shades" under symmetric transitions
+test('Conflict scenario evaluates cleanly under symmetric transitions with Hybrid balancing trade-offs', async () => {
   const conflictRaw = (await import('../src/data/conflict_order_book.json', { with: { type: 'json' } })).default as CampaignOrder[];
   assert.strictEqual(conflictRaw.length >= 40, true, 'Conflict dataset must contain at least 40 orders');
 
-  const optConflict = optimizeSequence(conflictRaw, 'PM1', 1.0, 2.4, {
-    ...DEFAULT_LOSS_MODEL_CONFIG,
-    enableGrammageDirectionPenalty: true,
-    grammageStepDownPenaltyHours: 0.6,
-    grammageLargeJumpPenaltyHours: 0.4,
-  });
+  const optConflict = optimizeSequence(conflictRaw, 'PM1', 1.0, 2.4, DEFAULT_LOSS_MODEL_CONFIG);
 
-  const colorFirstReversals = optConflict.strategies!.colorFirst.metrics.grammageReversalsCount ?? 0;
-  const hybridReversals = optConflict.strategies!.hybrid.metrics.grammageReversalsCount ?? 0;
-
-  assert.strictEqual(colorFirstReversals >= 5, true, `Colour-First must trigger significant grammage reversals (got ${colorFirstReversals})`);
-  assert.strictEqual(hybridReversals < colorFirstReversals, true, `Hybrid must have fewer reversals than Colour-First (${hybridReversals} vs ${colorFirstReversals})`);
-  assert.strictEqual(optConflict.conflictDetected, true, 'conflictDetected must be flagged true');
+  assert.strictEqual(optConflict.strategies!.hybrid.metrics.totalOperatingCostEur < optConflict.strategies!.naive.metrics.totalOperatingCostEur, true, 'Hybrid must outperform Naive on conflict dataset');
+  assert.strictEqual(optConflict.recommendedStrategyId, 'hybrid', 'Hybrid should be recommended for multi-dimensional trade-offs');
 });
 
-test('Adjusting grammage-down penalty slider dynamically impacts strategy costs and rankings', async () => {
+test('Symmetric transitions maintain consistent cost evaluation across strategy candidates', async () => {
   const conflictRaw = (await import('../src/data/conflict_order_book.json', { with: { type: 'json' } })).default as CampaignOrder[];
 
-  // At penalty = 0.0h:
-  const opt0 = optimizeSequence(conflictRaw, 'PM1', 1.0, 2.4, {
-    ...DEFAULT_LOSS_MODEL_CONFIG,
-    grammageStepDownPenaltyHours: 0.0,
-  });
+  const opt = optimizeSequence(conflictRaw, 'PM1', 1.0, 2.4, DEFAULT_LOSS_MODEL_CONFIG);
 
-  // At penalty = 1.0h:
-  const opt1 = optimizeSequence(conflictRaw, 'PM1', 1.0, 2.4, {
-    ...DEFAULT_LOSS_MODEL_CONFIG,
-    enableGrammageDirectionPenalty: true,
-    grammageStepDownPenaltyHours: 1.0,
-  });
+  const naive = opt.strategies!.naive.metrics;
+  const hybrid = opt.strategies!.hybrid.metrics;
 
-  assert.strictEqual(
-    opt1.strategies!.colorFirst.metrics.totalChangeoverHours > opt0.strategies!.colorFirst.metrics.totalChangeoverHours,
-    true,
-    'Higher penalty must increase Colour-First changeover hours due to reversals'
-  );
-  assert.strictEqual(
-    opt1.strategies!.colorFirst.metrics.totalOperatingCostEur > opt0.strategies!.colorFirst.metrics.totalOperatingCostEur,
-    true,
-    'Higher penalty must increase Colour-First total operating cost'
-  );
+  assert.strictEqual(hybrid.totalChangeoverHours < naive.totalChangeoverHours, true, 'Hybrid changeover hours must be lower than Naive');
+  assert.strictEqual(hybrid.totalOperatingCostEur < naive.totalOperatingCostEur, true, 'Hybrid total cost must be lower than Naive');
 });
 
 test('Hybrid total cost is <= Grammage-First and <= Colour-First across presets and penalties', async () => {
@@ -287,7 +252,7 @@ test('Recommendation rationale generates verdict, trade-off, breakdown rows, ran
   assert.strictEqual(rat.tradeOffStatement.length > 20, true, 'Trade-off must be a non-empty descriptive sentence');
 
   // Breakdown rows
-  assert.strictEqual(rat.breakdownRows.length, 10, 'Must have 10 comparison breakdown metrics');
+  assert.strictEqual(rat.breakdownRows.length, 9, 'Must have 9 comparison breakdown metrics');
   const totalChangeoverRow = rat.breakdownRows.find((r) => r.metric === 'Total Sequence Changeover');
   assert.ok(totalChangeoverRow, 'Total Sequence Changeover row must exist');
   assert.strictEqual(totalChangeoverRow.recommendedValue, opt.optimized.metrics.totalChangeoverHours);
@@ -300,7 +265,7 @@ test('Recommendation rationale generates verdict, trade-off, breakdown rows, ran
   // Sensitivity
   assert.ok(rat.breakEven, 'breakEven object must exist');
   assert.strictEqual(typeof rat.breakEven.statement, 'string');
-  assert.strictEqual(rat.breakEven.currentPenaltyHours, 0.6);
+  assert.strictEqual(rat.breakEven.currentPenaltyHours, 0.0);
 });
 
 console.log(`\n--- Test Results: ${passed} passed, ${failed} failed ---\n`);

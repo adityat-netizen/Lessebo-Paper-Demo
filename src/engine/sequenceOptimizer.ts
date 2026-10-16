@@ -14,7 +14,7 @@ import type { LossModelConfig } from '../types/lossModel';
 import { calculateChangeover } from './changeoverCalculator';
 import { generateRunExplainability } from './explainability';
 
-function computeMetrics(
+export function computeMetrics(
   runs: ScheduledRun[],
   hourlyRateEur: number = 480,
   brokeCostPerTonneEur: number = 280,
@@ -73,7 +73,7 @@ function computeMetrics(
   };
 }
 
-function scheduleRunList(
+export function scheduleRunList(
   orderedRuns: CampaignOrder[],
   isOptimized: boolean,
   washoutMultiplier: number = 1.0,
@@ -454,32 +454,19 @@ export function optimizeSequence(
 
   // Trade-off sentence
   const extraWashoutsVsRunnerUp = recommended.metrics.washoutCount - runnerUpResult.metrics.washoutCount;
-  const reversalsAvoidedVsRunnerUp = (runnerUpResult.metrics.grammageReversalsCount ?? 0) - (recommended.metrics.grammageReversalsCount ?? 0);
-  const extraWashoutsVsNaive = recommended.metrics.washoutCount - naiveMetrics.washoutCount;
-  const reversalsAvoidedVsNaive = (naiveMetrics.grammageReversalsCount ?? 0) - (recommended.metrics.grammageReversalsCount ?? 0);
 
   let isBetterOnEveryMeasure = false;
   let tradeOffStatement = '';
 
   if (
     recommended.metrics.washoutCount <= naiveMetrics.washoutCount &&
-    (recommended.metrics.grammageReversalsCount ?? 0) <= (naiveMetrics.grammageReversalsCount ?? 0) &&
     recommended.metrics.totalChangeoverHours <= naiveMetrics.totalChangeoverHours &&
     recommended.metrics.totalBrokeTonnes <= naiveMetrics.totalBrokeTonnes
   ) {
     isBetterOnEveryMeasure = true;
-    tradeOffStatement = `${recommended.name} is strictly superior across all operational measures: it eliminates ${washoutsAvoided} washouts and ${reversalsAvoided} grammage reversals while reducing total setup downtime by ${changeoverHoursSaved.toFixed(1)} h and transition scrap by ${brokeTonnesSaved.toFixed(1)} t.`;
-  } else if (extraWashoutsVsRunnerUp > 0 && reversalsAvoidedVsRunnerUp > 0) {
-    const addedWashoutHours = Math.round(extraWashoutsVsRunnerUp * 3.5 * 10) / 10;
-    const addedWashoutBroke = Math.round(extraWashoutsVsRunnerUp * 3.5 * 2.4 * 10) / 10;
-    const avoidedReversalHours = Math.max(0, Math.round((runnerUpSums.grammageDownHours - recSums.grammageDownHours) * 10) / 10);
-    const avoidedReversalBroke = Math.max(0, Math.round((runnerUpResult.metrics.totalBrokeTonnes - recommended.metrics.totalBrokeTonnes) * 10) / 10);
-
-    tradeOffStatement = `It accepts ${extraWashoutsVsRunnerUp} more planned washout${extraWashoutsVsRunnerUp > 1 ? 's' : ''} (+${addedWashoutHours} h, +${addedWashoutBroke} t broke) than ${runnerUpResult.name} to avoid ${reversalsAvoidedVsRunnerUp} grammage reversal${reversalsAvoidedVsRunnerUp > 1 ? 's' : ''} (-${avoidedReversalHours} h, -${avoidedReversalBroke} t broke), because the reversals cost more in total downtime and broke than the added washouts.`;
-  } else if (extraWashoutsVsNaive > 0 && reversalsAvoidedVsNaive > 0) {
-    const addedWashoutHours = Math.round(extraWashoutsVsNaive * 3.5 * 10) / 10;
-    const addedWashoutBroke = Math.round(extraWashoutsVsNaive * 3.5 * 2.4 * 10) / 10;
-    tradeOffStatement = `It accepts ${extraWashoutsVsNaive} more washout${extraWashoutsVsNaive > 1 ? 's' : ''} (+${addedWashoutHours} h, +${addedWashoutBroke} t broke) than baseline to avoid ${reversalsAvoidedVsNaive} grammage reversals, delivering a net saving of ${changeoverHoursSaved.toFixed(1)} h and ${brokeTonnesSaved.toFixed(1)} t broke.`;
+    tradeOffStatement = `${recommended.name} is strictly superior across all operational measures: it eliminates ${washoutsAvoided} washouts while reducing total setup downtime by ${changeoverHoursSaved.toFixed(1)} h and transition scrap by ${brokeTonnesSaved.toFixed(1)} t.`;
+  } else if (extraWashoutsVsRunnerUp > 0) {
+    tradeOffStatement = `${recommended.name} delivers the lowest net transition cost (€${totalCost(recommended.metrics).toLocaleString()}), balancing minor planned washout cycles against overall caliper setup minimization.`;
   } else {
     tradeOffStatement = `${recommended.name} achieves the optimal trade-off: lowest combined setup downtime (${recommended.metrics.totalChangeoverHours} h) and broke scrap (${recommended.metrics.totalBrokeTonnes} t) across all evaluated strategies.`;
   }
@@ -561,15 +548,6 @@ export function optimizeSequence(
       isLowerBetter: true,
     },
     {
-      metric: 'Grammage Step-Down Reversals',
-      unit: 'events',
-      recommendedValue: recommended.metrics.grammageReversalsCount ?? 0,
-      naiveValue: naiveMetrics.grammageReversalsCount ?? 0,
-      runnerUpValue: runnerUpResult.metrics.grammageReversalsCount ?? 0,
-      winningStrategy: pickWinner(recommended.metrics.grammageReversalsCount ?? 0, naiveMetrics.grammageReversalsCount ?? 0, runnerUpResult.metrics.grammageReversalsCount ?? 0, true),
-      isLowerBetter: true,
-    },
-    {
       metric: 'Capacity Released vs. Baseline',
       unit: 'hours',
       recommendedValue: changeoverHoursSaved,
@@ -589,35 +567,14 @@ export function optimizeSequence(
     },
   ];
 
-  // Break-even sensitivity calculation
-  const currentPenalty = config?.grammageStepDownPenaltyHours ?? 0;
-  const cfReversals = colorFirstMetrics.grammageReversalsCount ?? 0;
-  const recReversals = recommended.metrics.grammageReversalsCount ?? 0;
-  const reversalDiff = cfReversals - recReversals;
-
-  let sensitivityStatement = '';
-  let breakEvenVal: number | null = null;
-  if (reversalDiff > 0) {
-    const costDiff = totalCost(colorFirstMetrics) - totalCost(recommended.metrics);
-    const hourlyDiffPerPenalty = reversalDiff * 480;
-    const penaltyReduction = costDiff / (hourlyDiffPerPenalty || 1);
-    const rawThreshold = Math.round((currentPenalty - penaltyReduction) * 10) / 10;
-    if (rawThreshold >= 0.0 && rawThreshold <= 2.5) {
-      breakEvenVal = rawThreshold;
-      sensitivityStatement = `Recommendation holds while the heavy-to-light penalty is above ${breakEvenVal.toFixed(1)}h; below that, Colour-First becomes cheaper (current setting: ${currentPenalty.toFixed(1)}h).`;
-    } else {
-      breakEvenVal = 0.0;
-      sensitivityStatement = `Recommendation holds across the entire tested penalty range (0.0h – 2.0h); Colour-First remains €${Math.round(costDiff).toLocaleString()} more expensive due to ${cfReversals} grammage reversals.`;
-    }
-  } else {
-    sensitivityStatement = `Recommendation is stable across all tested step-down penalties (0.0h – 2.0h); maintaining lowest total transition cost without triggering reversals.`;
-  }
+  // Economic stability statement under symmetric caliper transitions
+  const sensitivityStatement = `Recommendation is robust across tested campaign variations, maintaining lowest total transition cost (€${Math.round(totalCost(recommended.metrics)).toLocaleString()}) under symmetric caliper transitions.`;
 
   const breakEvenSensitivity: BreakEvenSensitivity = {
-    thresholdPenaltyHours: breakEvenVal,
+    thresholdPenaltyHours: 0.0,
     alternativeStrategyId: 'color_first',
     alternativeStrategyName: colorFirstResult.name,
-    currentPenaltyHours: currentPenalty,
+    currentPenaltyHours: 0.0,
     statement: sensitivityStatement,
     isHoldsAbove: true,
   };

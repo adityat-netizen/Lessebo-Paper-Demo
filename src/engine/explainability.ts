@@ -69,26 +69,17 @@ export function generateRunExplainability(
     }
   }
 
-  // Explain grammage step (Direction-Aware)
+  // Explain grammage step (Symmetric)
   const gDelta = Math.abs(currentRun.grammage_gsm - previousRun.grammage_gsm);
-  const isReversal = previousRun.grammage_gsm > currentRun.grammage_gsm;
   if (gDelta === 0) {
     badges.push({ text: 'Identical Grammage', type: 'success' });
     reasons.push(`Zero caliper change: Consecutive runs at ${currentRun.grammage_gsm} gsm require no slice lip or vacuum adjustment.`);
-  } else if (isReversal) {
-    const penaltyText = _changeover.grammageDownHours && _changeover.grammageDownHours > 0.5
-      ? ` (${_changeover.grammageDownHours.toFixed(1)}h setup with penalty)`
-      : '';
-    badges.push({ text: `Step Down (-${gDelta}g GSM Reversal)`, type: 'warning' });
-    reasons.push(
-      `Heavy-to-light grammage step (${previousRun.grammage_gsm}g ➔ ${currentRun.grammage_gsm}g)${penaltyText}: Requires calender nip decompression and slice lip recalibration [Client input required].`
-    );
   } else if (gDelta <= 40) {
-    badges.push({ text: `Smooth Step (+${gDelta}g)`, type: 'neutral' });
-    reasons.push(`Minor caliper delta: Progressive +${gDelta} gsm ascending step completed in 0.5h.`);
+    badges.push({ text: `Caliper Step (Δ${gDelta}g)`, type: 'neutral' });
+    reasons.push(`Minor caliper delta: ${previousRun.grammage_gsm}g ➔ ${currentRun.grammage_gsm}g (Δ${gDelta} gsm) completed in 0.5h.`);
   } else {
-    badges.push({ text: `Large Caliper Jump (+${gDelta}g)`, type: 'warning' });
-    reasons.push(`Significant substance increase (${previousRun.grammage_gsm}g ➔ ${currentRun.grammage_gsm}g) requires steam curve restabilization (+1.2h).`);
+    badges.push({ text: `Large Caliper Jump (Δ${gDelta}g)`, type: 'warning' });
+    reasons.push(`Substantial substance transition (${previousRun.grammage_gsm}g ➔ ${currentRun.grammage_gsm}g, Δ${gDelta} gsm) requires slice lip recalibration (+1.2h).`);
   }
 
   // Explain format

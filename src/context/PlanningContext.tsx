@@ -29,9 +29,16 @@ import conflictOrdersRaw from '../data/conflict_order_book.json';
 
 import { computeForecast, type ForecastCalculationResult } from '../engine/forecastEngine';
 import { computeNetRequirements, type PlanningCalculationResult } from '../engine/planningEngine';
-import { optimizeSequence } from '../engine/sequenceOptimizer';
+import { optimizeSequence, scheduleRunList, computeMetrics } from '../engine/sequenceOptimizer';
+import { solveCpsatSequence, checkSolverHealth, type SolverHealthStatus } from '../engine/cpsatClient';
 import type { LossModelConfig } from '../types/lossModel';
 import { DEFAULT_LOSS_MODEL_CONFIG } from '../types/lossModel';
+import type {
+  ActiveOptimizer,
+  CpsatSolverSettings,
+  CpsatStrategyResult,
+} from '../types/cpsat';
+import { DEFAULT_CPSAT_SETTINGS } from '../types/cpsat';
 
 export type TabId =
   | 'executive'
@@ -110,6 +117,19 @@ interface PlanningContextValue {
   setSequenceScenarioPreset: (preset: 'standard' | 'conflict') => void;
   grammageDownPenaltyHours: number;
   setGrammageDownPenaltyHours: (hrs: number) => void;
+
+  // Google OR-Tools CP-SAT Optimizer Integration
+  activeOptimizer: ActiveOptimizer;
+  setActiveOptimizer: (opt: ActiveOptimizer) => void;
+  cpsatSettings: CpsatSolverSettings;
+  setCpsatSettings: (settings: CpsatSolverSettings) => void;
+  updateCpsatSettings: (updates: Partial<CpsatSolverSettings>) => void;
+  cpsatResult: CpsatStrategyResult | null;
+  isSolvingCpsat: boolean;
+  resolveCpsat: () => Promise<void>;
+  solverHealth: SolverHealthStatus | null;
+  solverCache: Partial<Record<ActiveOptimizer, CpsatStrategyResult>>;
+  ensureSolverResult: (optimizer: ActiveOptimizer) => Promise<CpsatStrategyResult | null>;
 }
 
 const PlanningContext = createContext<PlanningContextValue | null>(null);
@@ -126,17 +146,51 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [sequenceScenarioPreset, setSequenceScenarioPresetState] = useState<'standard' | 'conflict'>('standard');
   const [grammageDownPenaltyHours, setGrammageDownPenaltyHours] = useState<number>(0.0);
 
+  // Google OR-Tools CP-SAT State
+  const [activeOptimizer, setActiveOptimizer] = useState<ActiveOptimizer>('hybrid');
+  const [cpsatSettings, setCpsatSettings] = useState<CpsatSolverSettings>(DEFAULT_CPSAT_SETTINGS);
+  const [cpsatResult, setCpsatResult] = useState<CpsatStrategyResult | null>(null);
+  const [solverCache, setSolverCache] = useState<Partial<Record<ActiveOptimizer, CpsatStrategyResult>>>({});
+  const [isSolvingCpsat, setIsSolvingCpsat] = useState<boolean>(false);
+  const [cpsatSolveTrigger, setCpsatSolveTrigger] = useState<number>(0);
+  const [solverHealth, setSolverHealth] = useState<SolverHealthStatus | null>(null);
+
+  const updateCpsatSettings = (updates: Partial<CpsatSolverSettings>) => {
+    setCpsatSettings((prev) => ({ ...prev, ...updates }));
+  };
+
+  const resolveCpsat = async () => {
+    setCpsatSolveTrigger((prev) => prev + 1);
+  };
+
+  useEffect(() => {
+    checkSolverHealth().then((health) => setSolverHealth(health));
+  }, []);
+
   const setSequenceScenarioPreset = (preset: 'standard' | 'conflict') => {
     setSequenceScenarioPresetState(preset);
-    if (preset === 'conflict') {
-      setGrammageDownPenaltyHours(0.6);
-    } else {
-      setGrammageDownPenaltyHours(0.0);
-    }
+    setGrammageDownPenaltyHours(0.0);
+    setSolverCache({});
+    setCpsatResult(null);
   };
 
   // UI Navigation
-  const [activeTab, setActiveTab] = useState<TabId>('executive');
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const urlParams = new URLSearchParams(window.location.search);
+        const tabParam = urlParams.get('tab');
+        if (tabParam && ['executive', 'forecast', 'planning', 'sequencing'].includes(tabParam)) {
+          return tabParam as TabId;
+        }
+        const hash = window.location.hash.replace('#', '');
+        if (hash && ['executive', 'forecast', 'planning', 'sequencing'].includes(hash)) {
+          return hash as TabId;
+        }
+      }
+    } catch {}
+    return 'executive';
+  });
   const [selectedMachine, setSelectedMachine] = useState<MachineId>('PM1');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
@@ -399,25 +453,198 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
   }, [products, inventory, machineCapacity, forecastResult, activeScenarioParams, lossModelConfig, forecastHorizon]);
 
-  // Live Memoized Sequence Optimization synced with active scenario parameters
-  const optimizationResult = useMemo(() => {
+  // Live Effect to solve or load sequence using active optimizer (CP-SAT, Routing, MIP)
+  const ensureSolverResult = async (optimizer: ActiveOptimizer): Promise<CpsatStrategyResult | null> => {
+    if (optimizer === 'hybrid') return null;
+    if (solverCache[optimizer]) return solverCache[optimizer]!;
+    if (cpsatResult && cpsatResult.id === optimizer) return cpsatResult;
+
     const ordersToSchedule = sequenceScenarioPreset === 'conflict' ? conflictOrders : upcomingOrders;
     const effectiveLossConfig: LossModelConfig = {
       ...lossModelConfig,
-      enableGrammageDirectionPenalty: grammageDownPenaltyHours > 0,
-      grammageStepDownPenaltyHours: grammageDownPenaltyHours,
+      enableGrammageDirectionPenalty: false,
+      grammageStepDownPenaltyHours: 0.0,
       grammageLargeJumpThresholdGsm: 40,
-      grammageLargeJumpPenaltyHours: grammageDownPenaltyHours > 0 ? 0.4 : 0.0,
+      grammageLargeJumpPenaltyHours: 0.0,
     };
-
-    return optimizeSequence(
+    const baseOpt = optimizeSequence(
       ordersToSchedule,
       selectedMachine,
       activeScenarioParams.washoutMultiplier,
       activeScenarioParams.brokeRateTph,
       effectiveLossConfig
     );
-  }, [upcomingOrders, conflictOrders, selectedMachine, activeScenarioParams, lossModelConfig, sequenceScenarioPreset, grammageDownPenaltyHours]);
+    const hybridRuns = baseOpt.strategies?.hybrid?.runs ?? baseOpt.optimized.runs;
+
+    const res = await solveCpsatSequence(
+      ordersToSchedule,
+      selectedMachine,
+      activeScenarioParams.washoutMultiplier,
+      activeScenarioParams.brokeRateTph,
+      effectiveLossConfig,
+      cpsatSettings,
+      hybridRuns,
+      scheduleRunList,
+      computeMetrics,
+      sequenceScenarioPreset,
+      optimizer
+    );
+
+    setSolverCache((prev) => ({ ...prev, [optimizer]: res }));
+    return res;
+  };
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    if (activeOptimizer === 'hybrid') {
+      setIsSolvingCpsat(false);
+      return;
+    }
+
+    const runSolver = async () => {
+      setIsSolvingCpsat(true);
+      try {
+        const ordersToSchedule = sequenceScenarioPreset === 'conflict' ? conflictOrders : upcomingOrders;
+        const effectiveLossConfig: LossModelConfig = {
+          ...lossModelConfig,
+          enableGrammageDirectionPenalty: false,
+          grammageStepDownPenaltyHours: 0.0,
+          grammageLargeJumpThresholdGsm: 40,
+          grammageLargeJumpPenaltyHours: 0.0,
+        };
+
+        const baseOpt = optimizeSequence(
+          ordersToSchedule,
+          selectedMachine,
+          activeScenarioParams.washoutMultiplier,
+          activeScenarioParams.brokeRateTph,
+          effectiveLossConfig
+        );
+        const hybridRuns = baseOpt.strategies?.hybrid?.runs ?? baseOpt.optimized.runs;
+
+        const res = await solveCpsatSequence(
+          ordersToSchedule,
+          selectedMachine,
+          activeScenarioParams.washoutMultiplier,
+          activeScenarioParams.brokeRateTph,
+          effectiveLossConfig,
+          cpsatSettings,
+          hybridRuns,
+          scheduleRunList,
+          computeMetrics,
+          sequenceScenarioPreset,
+          activeOptimizer
+        );
+
+        if (!isCancelled) {
+          setCpsatResult(res);
+          setSolverCache((prev) => ({ ...prev, [activeOptimizer]: res }));
+        }
+      } catch (err) {
+        console.error(`Failed to solve with ${activeOptimizer}:`, err);
+      } finally {
+        if (!isCancelled) {
+          setIsSolvingCpsat(false);
+        }
+      }
+    };
+
+    runSolver();
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    activeOptimizer,
+    upcomingOrders,
+    conflictOrders,
+    selectedMachine,
+    sequenceScenarioPreset,
+    grammageDownPenaltyHours,
+    activeScenarioParams,
+    lossModelConfig,
+    cpsatSettings,
+    cpsatSolveTrigger,
+  ]);
+
+  // Live Memoized Sequence Optimization synced with active scenario parameters
+  const optimizationResult = useMemo(() => {
+    const ordersToSchedule = sequenceScenarioPreset === 'conflict' ? conflictOrders : upcomingOrders;
+    const effectiveLossConfig: LossModelConfig = {
+      ...lossModelConfig,
+      enableGrammageDirectionPenalty: false,
+      grammageStepDownPenaltyHours: 0.0,
+      grammageLargeJumpThresholdGsm: 40,
+      grammageLargeJumpPenaltyHours: 0.0,
+    };
+
+    const baseResult = optimizeSequence(
+      ordersToSchedule,
+      selectedMachine,
+      activeScenarioParams.washoutMultiplier,
+      activeScenarioParams.brokeRateTph,
+      effectiveLossConfig
+    );
+
+    // Attach all solved optimizer strategies to strategies map
+    if (baseResult.strategies) {
+      if (solverCache.cpsat) baseResult.strategies.cpsat = solverCache.cpsat;
+      if (solverCache.routing) baseResult.strategies.routing = solverCache.routing;
+      if (solverCache.mip) baseResult.strategies.mip = solverCache.mip;
+
+      if (cpsatResult) {
+        if (cpsatResult.id === 'cpsat') baseResult.strategies.cpsat = cpsatResult;
+        else if (cpsatResult.id === 'routing') baseResult.strategies.routing = cpsatResult;
+        else if (cpsatResult.id === 'mip') baseResult.strategies.mip = cpsatResult;
+      }
+    }
+
+    // Determine the active strategy candidate strictly reflecting selected activeOptimizer
+    const activeResult = activeOptimizer === 'hybrid'
+      ? baseResult.strategies?.hybrid
+      : (cpsatResult && cpsatResult.id === activeOptimizer ? cpsatResult : solverCache[activeOptimizer]);
+
+    if (activeResult && activeResult.runs.length > 0) {
+      const naiveMetrics = baseResult.naive.metrics;
+      const activeMetrics = activeResult.metrics;
+
+      const changeoverHoursSaved = Math.round((naiveMetrics.totalChangeoverHours - activeMetrics.totalChangeoverHours) * 10) / 10;
+      const brokeTonnesSaved = Math.round((naiveMetrics.totalBrokeTonnes - activeMetrics.totalBrokeTonnes) * 10) / 10;
+      const washoutsAvoided = Math.max(0, naiveMetrics.washoutCount - activeMetrics.washoutCount);
+      const financialSavingsEur = Math.round(changeoverHoursSaved * 480 + brokeTonnesSaved * 280);
+
+      return {
+        ...baseResult,
+        optimized: {
+          runs: activeResult.runs,
+          metrics: activeMetrics,
+        },
+        recommendedStrategyId: activeOptimizer as any,
+        savings: {
+          changeoverHoursSaved,
+          brokeTonnesSaved,
+          capacityReleasedHours: changeoverHoursSaved,
+          financialSavingsEur,
+          washoutsAvoided,
+          waterSavedM3: Math.max(0, Math.round(((naiveMetrics.totalWashoutWaterM3 ?? 0) - (activeMetrics.totalWashoutWaterM3 ?? 0)) * 10) / 10),
+          reversalsAvoided: 0,
+        },
+      };
+    }
+
+    return baseResult;
+  }, [
+    upcomingOrders,
+    conflictOrders,
+    selectedMachine,
+    activeScenarioParams,
+    lossModelConfig,
+    sequenceScenarioPreset,
+    grammageDownPenaltyHours,
+    activeOptimizer,
+    cpsatResult,
+    solverCache,
+  ]);
 
   return (
     <PlanningContext.Provider
@@ -476,6 +703,19 @@ export const PlanningProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setSequenceScenarioPreset,
         grammageDownPenaltyHours,
         setGrammageDownPenaltyHours,
+
+        // Google OR-Tools CP-SAT Optimizer Integration
+        activeOptimizer,
+        setActiveOptimizer,
+        cpsatSettings,
+        setCpsatSettings,
+        updateCpsatSettings,
+        cpsatResult,
+        isSolvingCpsat,
+        resolveCpsat,
+        solverHealth,
+        solverCache,
+        ensureSolverResult,
 
         // Synchronized Results
         forecastResult,

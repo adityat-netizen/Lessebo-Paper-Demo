@@ -197,7 +197,7 @@ export interface ScheduleMetrics {
   strategyName?: string;
 }
 
-export type SequencingStrategyId = 'naive' | 'color_first' | 'grammage_first' | 'hybrid';
+export type SequencingStrategyId = 'naive' | 'color_first' | 'grammage_first' | 'hybrid' | 'cpsat' | 'routing' | 'mip';
 
 export interface StrategyResult {
   id: SequencingStrategyId;
@@ -281,6 +281,9 @@ export interface OptimizationComparison {
     colorFirst: StrategyResult;
     grammageFirst: StrategyResult;
     hybrid: StrategyResult;
+    cpsat?: StrategyResult;
+    routing?: StrategyResult;
+    mip?: StrategyResult;
   };
   recommendedStrategyId?: SequencingStrategyId;
   conflictDetected?: boolean;
@@ -352,3 +355,4 @@ export interface ScenarioState {
   horizonMonths: 3 | 6 | 12;
   selectedRunId: string | null;
 }
+
